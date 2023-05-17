@@ -2,7 +2,8 @@ package opts // import "github.com/docker/docker/opts"
 
 import (
 	"os"
-	"strings"
+	// "strings"
+	"github.com/docker/docker/mystrings"
 
 	"github.com/pkg/errors"
 )
@@ -16,7 +17,7 @@ import (
 //
 // The only validation here is to check if name is empty, per #25099
 func ValidateEnv(val string) (string, error) {
-	k, _, ok := strings.Cut(val, "=")
+	k, _, ok := mystrings.Cut(val, "=")
 	if k == "" {
 		return "", errors.New("invalid environment variable: " + val)
 	}

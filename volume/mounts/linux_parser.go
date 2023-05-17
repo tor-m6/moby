@@ -6,6 +6,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"github.com/docker/docker/mystrings"
 
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/pkg/stringid"
@@ -322,7 +323,7 @@ func (p *linuxParser) ParseVolumesFrom(spec string) (string, string, error) {
 		return "", "", fmt.Errorf("volumes-from specification cannot be an empty string")
 	}
 
-	id, mode, _ := strings.Cut(spec, ":")
+	id, mode, _ := mystrings.Cut(spec, ":")
 	if mode == "" {
 		return id, "rw", nil
 	}

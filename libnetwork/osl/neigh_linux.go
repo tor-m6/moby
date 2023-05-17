@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 )
 
@@ -103,7 +103,7 @@ func (n *networkNamespace) DeleteNeighbor(dstIP net.IP, dstMac net.HardwareAddr,
 				nlnh.LinkIndex = iface.Attrs().Index
 			}
 			if err := nlh.NeighDel(nlnh); err != nil {
-				logrus.WithError(err).Warn("error while deleting neighbor entry")
+				logrus.Warnf("Deleting bridge mac mac %s failed, %v", dstMac, err)
 			}
 		}
 	}

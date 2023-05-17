@@ -9,10 +9,7 @@ import (
 	"github.com/pkg/errors"
 )
 
-// KeyValuePair represents an arbitrary named value.
-//
-// This is useful for commands containing key-value maps that want to preserve
-// the order of insertion, instead of map[string]string which does not.
+// KeyValuePair represent an arbitrary named value (useful in slice instead of map[string] string to preserve ordering)
 type KeyValuePair struct {
 	Key   string
 	Value string
@@ -22,15 +19,11 @@ func (kvp *KeyValuePair) String() string {
 	return kvp.Key + "=" + kvp.Value
 }
 
-// KeyValuePairOptional is identical to KeyValuePair, but allows for optional values.
+// KeyValuePairOptional is the same as KeyValuePair but Value is optional
 type KeyValuePairOptional struct {
 	Key     string
 	Value   *string
 	Comment string
-}
-
-func (kvpo *KeyValuePairOptional) String() string {
-	return kvpo.Key + "=" + kvpo.ValueString()
 }
 
 func (kvpo *KeyValuePairOptional) ValueString() string {
@@ -41,11 +34,7 @@ func (kvpo *KeyValuePairOptional) ValueString() string {
 	return v
 }
 
-// Command interface is implemented by every possible command in a Dockerfile.
-//
-// The interface only exposes the minimal common elements shared between every
-// command, while more detailed information per-command can be extracted using
-// runtime type analysis, e.g. type-switches.
+// Command is implemented by every command present in a dockerfile
 type Command interface {
 	Name() string
 	Location() []parser.Range
@@ -79,18 +68,17 @@ func newWithNameAndCode(req parseRequest) withNameAndCode {
 	return withNameAndCode{code: strings.TrimSpace(req.original), name: req.command, location: req.location}
 }
 
-// SingleWordExpander is a provider for variable expansion where a single word
-// corresponds to a single output.
+// SingleWordExpander is a provider for variable expansion where 1 word => 1 output
 type SingleWordExpander func(word string) (string, error)
 
-// SupportsSingleWordExpansion interface allows a command to support variable.
+// SupportsSingleWordExpansion interface marks a command as supporting variable
+// expansion
 type SupportsSingleWordExpansion interface {
 	Expand(expander SingleWordExpander) error
 }
 
-// SupportsSingleWordExpansionRaw interface allows a command to support
-// variable expansion, while ensuring that minimal transformations are applied
-// during expansion, so that quotes and other special characters are preserved.
+// SupportsSingleWordExpansionRaw interface marks a command as supporting
+// variable expansion, while ensuring that quotes are preserved
 type SupportsSingleWordExpansionRaw interface {
 	ExpandRaw(expander SingleWordExpander) error
 }
@@ -133,22 +121,18 @@ func expandSliceInPlace(values []string, expander SingleWordExpander) error {
 	return nil
 }
 
-// EnvCommand allows setting an variable in the container's environment.
-//
-//	ENV key1 value1 [keyN valueN...]
+// EnvCommand : ENV key1 value1 [keyN valueN...]
 type EnvCommand struct {
 	withNameAndCode
-	Env KeyValuePairs
+	Env KeyValuePairs // kvp slice instead of map to preserve ordering
 }
 
+// Expand variables
 func (c *EnvCommand) Expand(expander SingleWordExpander) error {
 	return expandKvpsInPlace(c.Env, expander)
 }
 
-// MaintainerCommand (deprecated) allows specifying a maintainer details for
-// the image.
-//
-//	MAINTAINER maintainer_name
+// MaintainerCommand : MAINTAINER maintainer_name
 type MaintainerCommand struct {
 	withNameAndCode
 	Maintainer string
@@ -170,15 +154,17 @@ func NewLabelCommand(k string, v string, NoExp bool) *LabelCommand {
 	return cmd
 }
 
-// LabelCommand sets an image label in the output
+// LabelCommand : LABEL some json data describing the image
 //
-//	LABEL some json data describing the image
+// Sets the Label variable foo to bar,
+//
 type LabelCommand struct {
 	withNameAndCode
-	Labels   KeyValuePairs
+	Labels   KeyValuePairs // kvp slice instead of map to preserve ordering
 	noExpand bool
 }
 
+// Expand variables
 func (c *LabelCommand) Expand(expander SingleWordExpander) error {
 	if c.noExpand {
 		return nil
@@ -188,16 +174,16 @@ func (c *LabelCommand) Expand(expander SingleWordExpander) error {
 
 // SourceContent represents an anonymous file object
 type SourceContent struct {
-	Path   string // path to the file
-	Data   string // string content from the file
-	Expand bool   // whether to expand file contents
+	Path   string
+	Data   string
+	Expand bool
 }
 
 // SourcesAndDest represent a collection of sources and a destination
 type SourcesAndDest struct {
-	DestPath       string          // destination to write output
-	SourcePaths    []string        // file path sources
-	SourceContents []SourceContent // anonymous file sources
+	DestPath       string
+	SourcePaths    []string
+	SourceContents []SourceContent
 }
 
 func (s *SourcesAndDest) Expand(expander SingleWordExpander) error {
@@ -230,22 +216,20 @@ func (s *SourcesAndDest) ExpandRaw(expander SingleWordExpander) error {
 	return nil
 }
 
-// AddCommand adds files from the provided sources to the target destination.
+// AddCommand : ADD foo /path
 //
-//	ADD foo /path
+// Add the file 'foo' to '/path'. Tarball and Remote URL (http, https) handling
+// exist here. If you do not wish to have this automatic handling, use COPY.
 //
-// ADD supports tarball and remote URL handling, which may not always be
-// desired - if you do not wish to have this automatic handling, use COPY.
 type AddCommand struct {
 	withNameAndCode
 	SourcesAndDest
-	Chown      string
-	Chmod      string
-	Link       bool
-	KeepGitDir bool // whether to keep .git dir, only meaningful for git sources
-	Checksum   string
+	Chown string
+	Chmod string
+	Link  bool
 }
 
+// Expand variables
 func (c *AddCommand) Expand(expander SingleWordExpander) error {
 	expandedChown, err := expander(c.Chown)
 	if err != nil {
@@ -253,20 +237,13 @@ func (c *AddCommand) Expand(expander SingleWordExpander) error {
 	}
 	c.Chown = expandedChown
 
-	expandedChecksum, err := expander(c.Checksum)
-	if err != nil {
-		return err
-	}
-	c.Checksum = expandedChecksum
-
 	return c.SourcesAndDest.Expand(expander)
 }
 
-// CopyCommand copies files from the provided sources to the target destination.
+// CopyCommand : COPY foo /path
 //
-//	COPY foo /path
+// Same as 'ADD' but without the tar and remote url handling.
 //
-// Same as 'ADD' but without the magic additional tarball and remote URL handling.
 type CopyCommand struct {
 	withNameAndCode
 	SourcesAndDest
@@ -276,6 +253,7 @@ type CopyCommand struct {
 	Link  bool
 }
 
+// Expand variables
 func (c *CopyCommand) Expand(expander SingleWordExpander) error {
 	expandedChown, err := expander(c.Chown)
 	if err != nil {
@@ -286,24 +264,22 @@ func (c *CopyCommand) Expand(expander SingleWordExpander) error {
 	return c.SourcesAndDest.Expand(expander)
 }
 
-// OnbuildCommand allows specifying a command to be run on builds the use the
-// resulting build image as a base image.
-//
-//	ONBUILD <some other command>
+// OnbuildCommand : ONBUILD <some other command>
 type OnbuildCommand struct {
 	withNameAndCode
 	Expression string
 }
 
-// WorkdirCommand sets the current working directory for all future commands in
-// the stage
+// WorkdirCommand : WORKDIR /tmp
 //
-//	WORKDIR /tmp
+// Set the working directory for future RUN/CMD/etc statements.
+//
 type WorkdirCommand struct {
 	withNameAndCode
 	Path string
 }
 
+// Expand variables
 func (c *WorkdirCommand) Expand(expander SingleWordExpander) error {
 	p, err := expander(c.Path)
 	if err != nil {
@@ -327,13 +303,16 @@ type ShellDependantCmdLine struct {
 	PrependShell bool
 }
 
-// RunCommand runs a command.
+// RunCommand : RUN some command yo
 //
-//	RUN "echo hi"       # sh -c "echo hi"
+// run a command and commit the image. Args are automatically prepended with
+// the current SHELL which defaults to 'sh -c' under linux or 'cmd /S /C' under
+// Windows, in the event there is only one argument The difference in processing:
 //
-// or
+// RUN echo hi          # sh -c echo hi       (Linux)
+// RUN echo hi          # cmd /S /C echo hi   (Windows)
+// RUN [ "echo", "hi" ] # echo hi
 //
-//	RUN ["echo", "hi"]  # echo hi
 type RunCommand struct {
 	withNameAndCode
 	withExternalData
@@ -348,54 +327,60 @@ func (c *RunCommand) Expand(expander SingleWordExpander) error {
 	return nil
 }
 
-// CmdCommand sets the default command to run in the container on start.
+// CmdCommand : CMD foo
 //
-//	CMD "echo hi"       # sh -c "echo hi"
+// Set the default command to run in the container (which may be empty).
+// Argument handling is the same as RUN.
 //
-// or
-//
-//	CMD ["echo", "hi"]  # echo hi
 type CmdCommand struct {
 	withNameAndCode
 	ShellDependantCmdLine
 }
 
-// HealthCheckCommand sets the default healthcheck command to run in the container.
+// HealthCheckCommand : HEALTHCHECK foo
 //
-//	HEALTHCHECK <health-config>
+// Set the default healthcheck command to run in the container (which may be empty).
+// Argument handling is the same as RUN.
+//
 type HealthCheckCommand struct {
 	withNameAndCode
 	Health *container.HealthConfig
 }
 
-// EntrypointCommand sets the default entrypoint of the container to use the
-// provided command.
+// EntrypointCommand : ENTRYPOINT /usr/sbin/nginx
 //
-//	ENTRYPOINT /usr/sbin/nginx
+// Set the entrypoint to /usr/sbin/nginx. Will accept the CMD as the arguments
+// to /usr/sbin/nginx. Uses the default shell if not in JSON format.
 //
-// Entrypoint uses the default shell if not in JSON format.
+// Handles command processing similar to CMD and RUN, only req.runConfig.Entrypoint
+// is initialized at newBuilder time instead of through argument parsing.
+//
 type EntrypointCommand struct {
 	withNameAndCode
 	ShellDependantCmdLine
 }
 
-// ExposeCommand marks a container port that can be exposed at runtime.
+// ExposeCommand : EXPOSE 6667/tcp 7000/tcp
 //
-//	EXPOSE 6667/tcp 7000/tcp
+// Expose ports for links and port mappings. This all ends up in
+// req.runConfig.ExposedPorts for runconfig.
+//
 type ExposeCommand struct {
 	withNameAndCode
 	Ports []string
 }
 
-// UserCommand sets the user for the rest of the stage, and when starting the
-// container at run-time.
+// UserCommand : USER foo
 //
-//	USER user
+// Set the user to 'foo' for future commands and when running the
+// ENTRYPOINT/CMD at container run time.
+//
 type UserCommand struct {
 	withNameAndCode
 	User string
 }
 
+// Expand variables
 func (c *UserCommand) Expand(expander SingleWordExpander) error {
 	p, err := expander(c.User)
 	if err != nil {
@@ -405,26 +390,29 @@ func (c *UserCommand) Expand(expander SingleWordExpander) error {
 	return nil
 }
 
-// VolumeCommand exposes the specified volume for use in the build environment.
+// VolumeCommand : VOLUME /foo
 //
-//	VOLUME /foo
+// Expose the volume /foo for use. Will also accept the JSON array form.
+//
 type VolumeCommand struct {
 	withNameAndCode
 	Volumes []string
 }
 
+// Expand variables
 func (c *VolumeCommand) Expand(expander SingleWordExpander) error {
 	return expandSliceInPlace(c.Volumes, expander)
 }
 
-// StopSignalCommand sets the signal that will be used to kill the container.
+// StopSignalCommand : STOPSIGNAL signal
 //
-//	STOPSIGNAL signal
+// Set the signal that will be used to kill the container.
 type StopSignalCommand struct {
 	withNameAndCode
 	Signal string
 }
 
+// Expand variables
 func (c *StopSignalCommand) Expand(expander SingleWordExpander) error {
 	p, err := expander(c.Signal)
 	if err != nil {
@@ -442,16 +430,17 @@ func (c *StopSignalCommand) CheckPlatform(platform string) error {
 	return nil
 }
 
-// ArgCommand adds the specified variable to the list of variables that can be
-// passed to the builder using the --build-arg flag for expansion and
-// substitution.
+// ArgCommand : ARG name[=value]
 //
-//	ARG name[=value]
+// Adds the variable foo to the trusted list of variables that can be passed
+// to builder using the --build-arg flag for expansion/substitution or passing to 'run'.
+// Dockerfile author may optionally set a default value of this variable.
 type ArgCommand struct {
 	withNameAndCode
 	Args []KeyValuePairOptional
 }
 
+// Expand variables
 func (c *ArgCommand) Expand(expander SingleWordExpander) error {
 	for i, v := range c.Args {
 		p, err := expander(v.Key)
@@ -471,42 +460,32 @@ func (c *ArgCommand) Expand(expander SingleWordExpander) error {
 	return nil
 }
 
-// ShellCommand sets a custom shell to use.
+// ShellCommand : SHELL powershell -command
 //
-//	SHELL bash -e -c
+// Set the non-default shell to use.
 type ShellCommand struct {
 	withNameAndCode
 	Shell strslice.StrSlice
 }
 
-// Stage represents a bundled collection of commands.
-//
-// Each stage begins with a FROM command (which is consumed into the Stage),
-// indicating the source or stage to derive from, and ends either at the
-// end-of-the file, or the start of the next stage.
-//
-// Stages can be named, and can be additionally configured to use a specific
-// platform, in the case of a multi-arch base image.
+// Stage represents a single stage in a multi-stage build
 type Stage struct {
-	Name     string    // name of the stage
-	Commands []Command // commands contained within the stage
-	BaseName string    // name of the base stage or source
-	Platform string    // platform of base source to use
-
-	Comment string // doc-comment directly above the stage
-
-	SourceCode string         // contents of the defining FROM command
-	Location   []parser.Range // location of the defining FROM command
+	Name       string
+	Commands   []Command
+	BaseName   string
+	SourceCode string
+	Platform   string
+	Location   []parser.Range
+	Comment    string
 }
 
-// AddCommand appends a command to the stage.
+// AddCommand to the stage
 func (s *Stage) AddCommand(cmd Command) {
 	// todo: validate cmd type
 	s.Commands = append(s.Commands, cmd)
 }
 
-// IsCurrentStage returns true if the provided stage name is the name of the
-// current stage, and false otherwise.
+// IsCurrentStage check if the stage name is the current stage
 func IsCurrentStage(s []Stage, name string) bool {
 	if len(s) == 0 {
 		return false
@@ -514,7 +493,7 @@ func IsCurrentStage(s []Stage, name string) bool {
 	return s[len(s)-1].Name == name
 }
 
-// CurrentStage returns the last stage from a list of stages.
+// CurrentStage return the last stage in a slice
 func CurrentStage(s []Stage) (*Stage, error) {
 	if len(s) == 0 {
 		return nil, errors.New("no build stage in current context")
@@ -522,7 +501,7 @@ func CurrentStage(s []Stage) (*Stage, error) {
 	return &s[len(s)-1], nil
 }
 
-// HasStage looks for the presence of a given stage name from a list of stages.
+// HasStage looks for the presence of a given stage name
 func HasStage(s []Stage, name string) (int, bool) {
 	for i, stage := range s {
 		// Stage name is case-insensitive by design

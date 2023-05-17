@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 
 	"github.com/containerd/containerd/content"
 	c8derrdefs "github.com/containerd/containerd/errdefs"
@@ -90,7 +91,7 @@ func (i *ImageService) manifestMatchesPlatform(ctx context.Context, img *image.I
 			continue
 		}
 
-		data, err := io.ReadAll(makeRdr(ra))
+		data, err := ioutil.ReadAll(makeRdr(ra))
 		ra.Close()
 
 		if err != nil {
@@ -130,7 +131,7 @@ func (i *ImageService) manifestMatchesPlatform(ctx context.Context, img *image.I
 				continue
 			}
 
-			data, err := io.ReadAll(makeRdr(ra))
+			data, err := ioutil.ReadAll(makeRdr(ra))
 			ra.Close()
 			if err != nil {
 				logger.WithError(err).Error("Error reading manifest for image")

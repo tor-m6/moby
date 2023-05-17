@@ -23,7 +23,7 @@ import (
 	"github.com/opencontainers/selinux/go-selinux"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-	archvariant "github.com/tonistiigi/go-archvariant"
+	// archvariant "github.com/tonistiigi/go-archvariant"
 )
 
 type createOpts struct {
@@ -347,8 +347,8 @@ func verifyNetworkingConfig(nwConfig *networktypes.NetworkingConfig) error {
 // maximumSpec returns the distribution platform with maximum compatibility for the current node.
 func maximumSpec() v1.Platform {
 	p := platforms.DefaultSpec()
-	if p.Architecture == "amd64" {
-		p.Variant = archvariant.AMD64Variant()
-	}
+	// if p.Architecture == "amd64" {
+	// 	p.Variant = archvariant.AMD64Variant()
+	// }
 	return p
 }

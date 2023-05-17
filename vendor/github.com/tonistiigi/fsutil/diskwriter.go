@@ -4,7 +4,7 @@ import (
 	"context"
 	"hash"
 	"io"
-	gofs "io/fs"
+	// gofs "io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/docker/docker/myfilepath"
 	"github.com/opencontainers/go-digest"
 	"github.com/pkg/errors"
 	"github.com/tonistiigi/fsutil/types"
@@ -67,7 +68,7 @@ func (dw *DiskWriter) Wait(ctx context.Context) error {
 	if err := dw.eg.Wait(); err != nil {
 		return err
 	}
-	return filepath.WalkDir(dw.dest, func(path string, d gofs.DirEntry, prevErr error) error {
+	return myfilepath.WalkDir(dw.dest, func(path string, d os.FileInfo, prevErr error) error {
 		if prevErr != nil {
 			return prevErr
 		}

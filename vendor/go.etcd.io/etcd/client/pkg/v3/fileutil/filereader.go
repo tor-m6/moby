@@ -17,14 +17,14 @@ package fileutil
 import (
 	"bufio"
 	"io"
-	"io/fs"
+	// "io/fs"
 	"os"
 )
 
 // FileReader is a wrapper of io.Reader. It also provides file info.
 type FileReader interface {
 	io.Reader
-	FileInfo() (fs.FileInfo, error)
+	FileInfo() (os.FileInfo, error)
 }
 
 type fileReader struct {
@@ -35,14 +35,14 @@ func NewFileReader(f *os.File) FileReader {
 	return &fileReader{f}
 }
 
-func (fr *fileReader) FileInfo() (fs.FileInfo, error) {
+func (fr *fileReader) FileInfo() (os.FileInfo, error) {
 	return fr.Stat()
 }
 
 // FileBufReader is a wrapper of bufio.Reader. It also provides file info.
 type FileBufReader struct {
 	*bufio.Reader
-	fi fs.FileInfo
+	fi os.FileInfo
 }
 
 func NewFileBufReader(fr FileReader) *FileBufReader {
@@ -55,6 +55,6 @@ func NewFileBufReader(fr FileReader) *FileBufReader {
 	return &FileBufReader{bufReader, fi}
 }
 
-func (fbr *FileBufReader) FileInfo() fs.FileInfo {
+func (fbr *FileBufReader) FileInfo() os.FileInfo {
 	return fbr.fi
 }

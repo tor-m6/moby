@@ -222,7 +222,8 @@ func (s *scheduler) build(ctx context.Context, edge Edge) (CachedResult, error) 
 
 	wait := make(chan struct{})
 
-	p := s.newPipe(e, nil, pipe.Request{Payload: &edgeRequest{desiredState: edgeStatusComplete}})
+	var p *pipe.Pipe
+	p = s.newPipe(e, nil, pipe.Request{Payload: &edgeRequest{desiredState: edgeStatusComplete}})
 	p.OnSendCompletion = func() {
 		p.Receiver.Receive()
 		if p.Receiver.Status().Completed {

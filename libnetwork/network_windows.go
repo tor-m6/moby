@@ -1,4 +1,3 @@
-//go:build windows
 // +build windows
 
 package libnetwork
@@ -8,10 +7,10 @@ import (
 	"time"
 
 	"github.com/Microsoft/hcsshim"
-	"github.com/docker/docker/libnetwork/drivers/windows"
-	"github.com/docker/docker/libnetwork/ipamapi"
-	"github.com/docker/docker/libnetwork/ipams/windowsipam"
-	"github.com/sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
+	"github.com/docker/libnetwork/drivers/windows"
+	"github.com/docker/libnetwork/ipamapi"
+	"github.com/docker/libnetwork/ipams/windowsipam"
 )
 
 func executeInCompartment(compartmentID uint32, x func()) {
@@ -33,7 +32,7 @@ func (n *network) startResolver() {
 		return
 	}
 	n.resolverOnce.Do(func() {
-		logrus.Debugf("Launching DNS server for network %q", n.Name())
+		logrus.Debugf("Launching DNS server for network", n.Name())
 		options := n.Info().DriverOptions()
 		hnsid := options[windows.HNSID]
 
@@ -50,7 +49,7 @@ func (n *network) startResolver() {
 		for _, subnet := range hnsresponse.Subnets {
 			if subnet.GatewayAddress != "" {
 				for i := 0; i < 3; i++ {
-					resolver := NewResolver(subnet.GatewayAddress, false, n)
+					resolver := NewResolver(subnet.GatewayAddress, false, "", n)
 					logrus.Debugf("Binding a resolver on network %s gateway %s", n.Name(), subnet.GatewayAddress)
 					executeInCompartment(hnsresponse.DNSServerCompartment, resolver.SetupFunc(53))
 

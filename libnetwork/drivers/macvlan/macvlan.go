@@ -1,30 +1,30 @@
-//go:build linux
-// +build linux
-
 package macvlan
 
 import (
 	"net"
 	"sync"
 
-	"github.com/docker/docker/libnetwork/datastore"
-	"github.com/docker/docker/libnetwork/discoverapi"
-	"github.com/docker/docker/libnetwork/driverapi"
-	"github.com/docker/docker/libnetwork/types"
+	"github.com/docker/libnetwork/datastore"
+	"github.com/docker/libnetwork/discoverapi"
+	"github.com/docker/libnetwork/driverapi"
+	"github.com/docker/libnetwork/osl"
+	"github.com/docker/libnetwork/types"
 )
 
 const (
+	vethLen             = 7
 	containerVethPrefix = "eth"
 	vethPrefix          = "veth"
-	vethLen             = len(vethPrefix) + 7
-	driverName          = "macvlan"      // driver type name
-	modePrivate         = "private"      // macvlan mode private
-	modeVepa            = "vepa"         // macvlan mode vepa
-	modeBridge          = "bridge"       // macvlan mode bridge
-	modePassthru        = "passthru"     // macvlan mode passthrough
-	parentOpt           = "parent"       // parent interface -o parent
-	driverModeOpt       = "macvlan_mode" // macvlan mode ux opt suffix
+	macvlanType         = "macvlan"  // driver type name
+	modePrivate         = "private"  // macvlan mode private
+	modeVepa            = "vepa"     // macvlan mode vepa
+	modeBridge          = "bridge"   // macvlan mode bridge
+	modePassthru        = "passthru" // macvlan mode passthrough
+	parentOpt           = "parent"   // parent interface -o parent
+	modeOpt             = "_mode"    // macvlan mode ux opt suffix
 )
+
+var driverModeOpt = macvlanType + modeOpt // mode --option macvlan_mode
 
 type endpointTable map[string]*endpoint
 
@@ -50,14 +50,15 @@ type endpoint struct {
 
 type network struct {
 	id        string
+	sbox      osl.Sandbox
 	endpoints endpointTable
 	driver    *driver
 	config    *configuration
 	sync.Mutex
 }
 
-// Register initializes and registers the libnetwork macvlan driver
-func Register(r driverapi.Registerer, config map[string]interface{}) error {
+// Init initializes and registers the libnetwork macvlan driver
+func Init(dc driverapi.DriverCallback, config map[string]interface{}) error {
 	c := driverapi.Capability{
 		DataScope:         datastore.LocalScope,
 		ConnectivityScope: datastore.GlobalScope,
@@ -65,11 +66,9 @@ func Register(r driverapi.Registerer, config map[string]interface{}) error {
 	d := &driver{
 		networks: networkTable{},
 	}
-	if err := d.initStore(config); err != nil {
-		return err
-	}
+	d.initStore(config)
 
-	return r.RegisterDriver(driverName, d, c)
+	return dc.RegisterDriver(macvlanType, d, c)
 }
 
 func (d *driver) NetworkAllocate(id string, option map[string]string, ipV4Data, ipV6Data []driverapi.IPAMData) (map[string]string, error) {
@@ -81,11 +80,11 @@ func (d *driver) NetworkFree(id string) error {
 }
 
 func (d *driver) EndpointOperInfo(nid, eid string) (map[string]interface{}, error) {
-	return make(map[string]interface{}), nil
+	return make(map[string]interface{}, 0), nil
 }
 
 func (d *driver) Type() string {
-	return driverName
+	return macvlanType
 }
 
 func (d *driver) IsBuiltIn() bool {

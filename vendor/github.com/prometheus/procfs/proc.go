@@ -16,8 +16,9 @@ package procfs
 import (
 	"bytes"
 	"fmt"
-	"io"
+	// "io"
 	"os"
+	"io/ioutil"
 	"strconv"
 	"strings"
 
@@ -142,7 +143,7 @@ func (p Proc) Wchan() (string, error) {
 	}
 	defer f.Close()
 
-	data, err := io.ReadAll(f)
+	data, err := ioutil.ReadAll(f)
 	if err != nil {
 		return "", err
 	}
@@ -311,7 +312,7 @@ func (p Proc) FileDescriptorsInfo() (ProcFDInfos, error) {
 
 // Schedstat returns task scheduling information for the process.
 func (p Proc) Schedstat() (ProcSchedstat, error) {
-	contents, err := os.ReadFile(p.path("schedstat"))
+	contents, err := ioutil.ReadFile(p.path("schedstat"))
 	if err != nil {
 		return ProcSchedstat{}, err
 	}

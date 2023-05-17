@@ -3,6 +3,7 @@ package chrootarchive // import "github.com/docker/docker/pkg/chrootarchive"
 import (
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 
@@ -74,7 +75,7 @@ func untarHandler(tarArchive io.Reader, dest string, options *archive.TarOptions
 		}
 	}
 
-	r := io.NopCloser(tarArchive)
+	r := ioutil.NopCloser(tarArchive)
 	if decompress {
 		decompressedArchive, err := archive.DecompressStream(tarArchive)
 		if err != nil {

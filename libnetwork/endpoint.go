@@ -1,36 +1,67 @@
 package libnetwork
 
 import (
+	"container/heap"
 	"encoding/json"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 
-	"github.com/docker/docker/libnetwork/datastore"
-	"github.com/docker/docker/libnetwork/ipamapi"
-	"github.com/docker/docker/libnetwork/netlabel"
-	"github.com/docker/docker/libnetwork/options"
-	"github.com/docker/docker/libnetwork/types"
-	"github.com/sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
+	"github.com/docker/libnetwork/datastore"
+	"github.com/docker/libnetwork/ipamapi"
+	"github.com/docker/libnetwork/netlabel"
+	"github.com/docker/libnetwork/options"
+	"github.com/docker/libnetwork/types"
 )
+
+// Endpoint represents a logical connection between a network and a sandbox.
+type Endpoint interface {
+	// A system generated id for this endpoint.
+	ID() string
+
+	// Name returns the name of this endpoint.
+	Name() string
+
+	// Network returns the name of the network to which this endpoint is attached.
+	Network() string
+
+	// Join joins the sandbox to the endpoint and populates into the sandbox
+	// the network resources allocated for the endpoint.
+	Join(sandbox Sandbox, options ...EndpointOption) error
+
+	// Leave detaches the network resources populated in the sandbox.
+	Leave(sandbox Sandbox, options ...EndpointOption) error
+
+	// Return certain operational data belonging to this endpoint
+	Info() EndpointInfo
+
+	// DriverInfo returns a collection of driver operational data related to this endpoint retrieved from the driver
+	DriverInfo() (map[string]interface{}, error)
+
+	// Delete and detaches this endpoint from the network.
+	Delete(force bool) error
+}
 
 // EndpointOption is an option setter function type used to pass various options to Network
 // and Endpoint interfaces methods. The various setter functions of type EndpointOption are
 // provided by libnetwork, they look like <Create|Join|Leave>Option[...](...)
-type EndpointOption func(ep *Endpoint)
+type EndpointOption func(ep *endpoint)
 
-// Endpoint represents a logical connection between a network and a sandbox.
-type Endpoint struct {
+type endpoint struct {
 	name              string
 	id                string
 	network           *network
 	iface             *endpointInterface
 	joinInfo          *endpointJoinInfo
 	sandboxID         string
+	locator           string
 	exposedPorts      []types.TransportPort
 	anonymous         bool
 	disableResolution bool
 	generic           map[string]interface{}
+	joinLeaveDone     chan struct{}
 	prefAddress       net.IP
 	prefAddressV6     net.IP
 	ipamOptions       map[string]string
@@ -44,13 +75,12 @@ type Endpoint struct {
 	dbIndex           uint64
 	dbExists          bool
 	serviceEnabled    bool
-	loadBalancer      bool
-	mu                sync.Mutex
+	sync.Mutex
 }
 
-func (ep *Endpoint) MarshalJSON() ([]byte, error) {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
+func (ep *endpoint) MarshalJSON() ([]byte, error) {
+	ep.Lock()
+	defer ep.Unlock()
 
 	epMap := make(map[string]interface{})
 	epMap["name"] = ep.name
@@ -62,6 +92,7 @@ func (ep *Endpoint) MarshalJSON() ([]byte, error) {
 		epMap["generic"] = ep.generic
 	}
 	epMap["sandbox"] = ep.sandboxID
+	epMap["locator"] = ep.locator
 	epMap["anonymous"] = ep.anonymous
 	epMap["disableResolution"] = ep.disableResolution
 	epMap["myAliases"] = ep.myAliases
@@ -70,14 +101,13 @@ func (ep *Endpoint) MarshalJSON() ([]byte, error) {
 	epMap["virtualIP"] = ep.virtualIP.String()
 	epMap["ingressPorts"] = ep.ingressPorts
 	epMap["svcAliases"] = ep.svcAliases
-	epMap["loadBalancer"] = ep.loadBalancer
 
 	return json.Marshal(epMap)
 }
 
-func (ep *Endpoint) UnmarshalJSON(b []byte) (err error) {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
+func (ep *endpoint) UnmarshalJSON(b []byte) (err error) {
+	ep.Lock()
+	defer ep.Unlock()
 
 	var epMap map[string]interface{}
 	if err := json.Unmarshal(b, &epMap); err != nil {
@@ -86,25 +116,19 @@ func (ep *Endpoint) UnmarshalJSON(b []byte) (err error) {
 	ep.name = epMap["name"].(string)
 	ep.id = epMap["id"].(string)
 
-	// TODO(cpuguy83): So yeah, this isn't checking any errors anywhere.
-	// Seems like we should be checking errors even because of memory related issues that can arise.
-	// Alas it seems like given the nature of this data we could introduce problems if we start checking these errors.
-	//
-	// If anyone ever comes here and figures out one way or another if we can/should be checking these errors and it turns out we can't... then please document *why*
-
 	ib, _ := json.Marshal(epMap["ep_iface"])
-	json.Unmarshal(ib, &ep.iface) //nolint:errcheck
+	json.Unmarshal(ib, &ep.iface)
 
 	jb, _ := json.Marshal(epMap["joinInfo"])
-	json.Unmarshal(jb, &ep.joinInfo) //nolint:errcheck
+	json.Unmarshal(jb, &ep.joinInfo)
 
 	tb, _ := json.Marshal(epMap["exposed_ports"])
 	var tPorts []types.TransportPort
-	json.Unmarshal(tb, &tPorts) //nolint:errcheck
+	json.Unmarshal(tb, &tPorts)
 	ep.exposedPorts = tPorts
 
 	cb, _ := json.Marshal(epMap["sandbox"])
-	json.Unmarshal(cb, &ep.sandboxID) //nolint:errcheck
+	json.Unmarshal(cb, &ep.sandboxID)
 
 	if v, ok := epMap["generic"]; ok {
 		ep.generic = v.(map[string]interface{})
@@ -151,6 +175,7 @@ func (ep *Endpoint) UnmarshalJSON(b []byte) (err error) {
 				tplist = append(tplist, tp)
 			}
 			ep.generic[netlabel.ExposedPorts] = tplist
+
 		}
 	}
 
@@ -159,6 +184,9 @@ func (ep *Endpoint) UnmarshalJSON(b []byte) (err error) {
 	}
 	if v, ok := epMap["disableResolution"]; ok {
 		ep.disableResolution = v.(bool)
+	}
+	if l, ok := epMap["locator"]; ok {
+		ep.locator = l.(string)
 	}
 
 	if sn, ok := epMap["svcName"]; ok {
@@ -173,39 +201,36 @@ func (ep *Endpoint) UnmarshalJSON(b []byte) (err error) {
 		ep.virtualIP = net.ParseIP(vip.(string))
 	}
 
-	if v, ok := epMap["loadBalancer"]; ok {
-		ep.loadBalancer = v.(bool)
-	}
-
 	sal, _ := json.Marshal(epMap["svcAliases"])
 	var svcAliases []string
-	json.Unmarshal(sal, &svcAliases) //nolint:errcheck
+	json.Unmarshal(sal, &svcAliases)
 	ep.svcAliases = svcAliases
 
 	pc, _ := json.Marshal(epMap["ingressPorts"])
 	var ingressPorts []*PortConfig
-	json.Unmarshal(pc, &ingressPorts) //nolint:errcheck
+	json.Unmarshal(pc, &ingressPorts)
 	ep.ingressPorts = ingressPorts
 
 	ma, _ := json.Marshal(epMap["myAliases"])
 	var myAliases []string
-	json.Unmarshal(ma, &myAliases) //nolint:errcheck
+	json.Unmarshal(ma, &myAliases)
 	ep.myAliases = myAliases
 	return nil
 }
 
-func (ep *Endpoint) New() datastore.KVObject {
-	return &Endpoint{network: ep.getNetwork()}
+func (ep *endpoint) New() datastore.KVObject {
+	return &endpoint{network: ep.getNetwork()}
 }
 
-func (ep *Endpoint) CopyTo(o datastore.KVObject) error {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
+func (ep *endpoint) CopyTo(o datastore.KVObject) error {
+	ep.Lock()
+	defer ep.Unlock()
 
-	dstEp := o.(*Endpoint)
+	dstEp := o.(*endpoint)
 	dstEp.name = ep.name
 	dstEp.id = ep.id
 	dstEp.sandboxID = ep.sandboxID
+	dstEp.locator = ep.locator
 	dstEp.dbIndex = ep.dbIndex
 	dstEp.dbExists = ep.dbExists
 	dstEp.anonymous = ep.anonymous
@@ -213,7 +238,6 @@ func (ep *Endpoint) CopyTo(o datastore.KVObject) error {
 	dstEp.svcName = ep.svcName
 	dstEp.svcID = ep.svcID
 	dstEp.virtualIP = ep.virtualIP
-	dstEp.loadBalancer = ep.loadBalancer
 
 	dstEp.svcAliases = make([]string, len(ep.svcAliases))
 	copy(dstEp.svcAliases, ep.svcAliases)
@@ -223,16 +247,12 @@ func (ep *Endpoint) CopyTo(o datastore.KVObject) error {
 
 	if ep.iface != nil {
 		dstEp.iface = &endpointInterface{}
-		if err := ep.iface.CopyTo(dstEp.iface); err != nil {
-			return err
-		}
+		ep.iface.CopyTo(dstEp.iface)
 	}
 
 	if ep.joinInfo != nil {
 		dstEp.joinInfo = &endpointJoinInfo{}
-		if err := ep.joinInfo.CopyTo(dstEp.joinInfo); err != nil {
-			return err
-		}
+		ep.joinInfo.CopyTo(dstEp.joinInfo)
 	}
 
 	dstEp.exposedPorts = make([]types.TransportPort, len(ep.exposedPorts))
@@ -249,31 +269,28 @@ func (ep *Endpoint) CopyTo(o datastore.KVObject) error {
 	return nil
 }
 
-// ID returns the system-generated id for this endpoint.
-func (ep *Endpoint) ID() string {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
+func (ep *endpoint) ID() string {
+	ep.Lock()
+	defer ep.Unlock()
 
 	return ep.id
 }
 
-// Name returns the name of this endpoint.
-func (ep *Endpoint) Name() string {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
+func (ep *endpoint) Name() string {
+	ep.Lock()
+	defer ep.Unlock()
 
 	return ep.name
 }
 
-func (ep *Endpoint) MyAliases() []string {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
+func (ep *endpoint) MyAliases() []string {
+	ep.Lock()
+	defer ep.Unlock()
 
 	return ep.myAliases
 }
 
-// Network returns the name of the network to which this endpoint is attached.
-func (ep *Endpoint) Network() string {
+func (ep *endpoint) Network() string {
 	if ep.network == nil {
 		return ""
 	}
@@ -281,41 +298,41 @@ func (ep *Endpoint) Network() string {
 	return ep.network.name
 }
 
-func (ep *Endpoint) isAnonymous() bool {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
+func (ep *endpoint) isAnonymous() bool {
+	ep.Lock()
+	defer ep.Unlock()
 	return ep.anonymous
 }
 
 // isServiceEnabled check if service is enabled on the endpoint
-func (ep *Endpoint) isServiceEnabled() bool {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
+func (ep *endpoint) isServiceEnabled() bool {
+	ep.Lock()
+	defer ep.Unlock()
 	return ep.serviceEnabled
 }
 
 // enableService sets service enabled on the endpoint
-func (ep *Endpoint) enableService() {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
+func (ep *endpoint) enableService() {
+	ep.Lock()
+	defer ep.Unlock()
 	ep.serviceEnabled = true
 }
 
 // disableService disables service on the endpoint
-func (ep *Endpoint) disableService() {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
+func (ep *endpoint) disableService() {
+	ep.Lock()
+	defer ep.Unlock()
 	ep.serviceEnabled = false
 }
 
-func (ep *Endpoint) needResolver() bool {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
+func (ep *endpoint) needResolver() bool {
+	ep.Lock()
+	defer ep.Unlock()
 	return !ep.disableResolution
 }
 
 // endpoint Key structure : endpoint/network-id/endpoint-id
-func (ep *Endpoint) Key() []string {
+func (ep *endpoint) Key() []string {
 	if ep.network == nil {
 		return nil
 	}
@@ -323,7 +340,7 @@ func (ep *Endpoint) Key() []string {
 	return []string{datastore.EndpointKeyPrefix, ep.network.id, ep.id}
 }
 
-func (ep *Endpoint) KeyPrefix() []string {
+func (ep *endpoint) KeyPrefix() []string {
 	if ep.network == nil {
 		return nil
 	}
@@ -331,7 +348,18 @@ func (ep *Endpoint) KeyPrefix() []string {
 	return []string{datastore.EndpointKeyPrefix, ep.network.id}
 }
 
-func (ep *Endpoint) Value() []byte {
+func (ep *endpoint) networkIDFromKey(key string) (string, error) {
+	// endpoint Key structure : docker/libnetwork/endpoint/${network-id}/${endpoint-id}
+	// it's an invalid key if the key doesn't have all the 5 key elements above
+	keyElements := strings.Split(key, "/")
+	if !strings.HasPrefix(key, datastore.Key(datastore.EndpointKeyPrefix)) || len(keyElements) < 5 {
+		return "", fmt.Errorf("invalid endpoint key : %v", key)
+	}
+	// network-id is placed at index=3. pls refer to endpoint.Key() method
+	return strings.Split(key, "/")[3], nil
+}
+
+func (ep *endpoint) Value() []byte {
 	b, err := json.Marshal(ep)
 	if err != nil {
 		return nil
@@ -339,36 +367,36 @@ func (ep *Endpoint) Value() []byte {
 	return b
 }
 
-func (ep *Endpoint) SetValue(value []byte) error {
+func (ep *endpoint) SetValue(value []byte) error {
 	return json.Unmarshal(value, ep)
 }
 
-func (ep *Endpoint) Index() uint64 {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
+func (ep *endpoint) Index() uint64 {
+	ep.Lock()
+	defer ep.Unlock()
 	return ep.dbIndex
 }
 
-func (ep *Endpoint) SetIndex(index uint64) {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
+func (ep *endpoint) SetIndex(index uint64) {
+	ep.Lock()
+	defer ep.Unlock()
 	ep.dbIndex = index
 	ep.dbExists = true
 }
 
-func (ep *Endpoint) Exists() bool {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
+func (ep *endpoint) Exists() bool {
+	ep.Lock()
+	defer ep.Unlock()
 	return ep.dbExists
 }
 
-func (ep *Endpoint) Skip() bool {
+func (ep *endpoint) Skip() bool {
 	return ep.getNetwork().Skip()
 }
 
-func (ep *Endpoint) processOptions(options ...EndpointOption) {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
+func (ep *endpoint) processOptions(options ...EndpointOption) {
+	ep.Lock()
+	defer ep.Unlock()
 
 	for _, opt := range options {
 		if opt != nil {
@@ -377,14 +405,14 @@ func (ep *Endpoint) processOptions(options ...EndpointOption) {
 	}
 }
 
-func (ep *Endpoint) getNetwork() *network {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
+func (ep *endpoint) getNetwork() *network {
+	ep.Lock()
+	defer ep.Unlock()
 
 	return ep.network
 }
 
-func (ep *Endpoint) getNetworkFromStore() (*network, error) {
+func (ep *endpoint) getNetworkFromStore() (*network, error) {
 	if ep.network == nil {
 		return nil, fmt.Errorf("invalid network object in endpoint %s", ep.Name())
 	}
@@ -392,11 +420,14 @@ func (ep *Endpoint) getNetworkFromStore() (*network, error) {
 	return ep.network.getController().getNetworkFromStore(ep.network.id)
 }
 
-// Join joins the sandbox to the endpoint and populates into the sandbox
-// the network resources allocated for the endpoint.
-func (ep *Endpoint) Join(sb *Sandbox, options ...EndpointOption) error {
-	if sb == nil || sb.ID() == "" || sb.Key() == "" {
-		return types.BadRequestErrorf("invalid Sandbox passed to endpoint join: %v", sb)
+func (ep *endpoint) Join(sbox Sandbox, options ...EndpointOption) error {
+	if sbox == nil {
+		return types.BadRequestErrorf("endpoint cannot be joined by nil container")
+	}
+
+	sb, ok := sbox.(*sandbox)
+	if !ok {
+		return types.BadRequestErrorf("not a valid Sandbox interface")
 	}
 
 	sb.joinLeaveStart()
@@ -405,7 +436,7 @@ func (ep *Endpoint) Join(sb *Sandbox, options ...EndpointOption) error {
 	return ep.sbJoin(sb, options...)
 }
 
-func (ep *Endpoint) sbJoin(sb *Sandbox, options ...EndpointOption) (err error) {
+func (ep *endpoint) sbJoin(sb *sandbox, options ...EndpointOption) (err error) {
 	n, err := ep.getNetworkFromStore()
 	if err != nil {
 		return fmt.Errorf("failed to get network from store during join: %v", err)
@@ -416,21 +447,21 @@ func (ep *Endpoint) sbJoin(sb *Sandbox, options ...EndpointOption) (err error) {
 		return fmt.Errorf("failed to get endpoint from store during join: %v", err)
 	}
 
-	ep.mu.Lock()
+	ep.Lock()
 	if ep.sandboxID != "" {
-		ep.mu.Unlock()
+		ep.Unlock()
 		return types.ForbiddenErrorf("another container is attached to the same network endpoint")
 	}
 	ep.network = n
 	ep.sandboxID = sb.ID()
 	ep.joinInfo = &endpointJoinInfo{}
 	epid := ep.id
-	ep.mu.Unlock()
+	ep.Unlock()
 	defer func() {
 		if err != nil {
-			ep.mu.Lock()
+			ep.Lock()
 			ep.sandboxID = ""
-			ep.mu.Unlock()
+			ep.Unlock()
 		}
 	}()
 
@@ -460,16 +491,12 @@ func (ep *Endpoint) sbJoin(sb *Sandbox, options ...EndpointOption) (err error) {
 		n.getController().watchSvcRecord(ep)
 	}
 
-	// Do not update hosts file with internal networks endpoint IP
-	if !n.ingress && n.Name() != libnGWNetwork {
-		var addresses []string
-		if ip := ep.getFirstInterfaceIPv4Address(); ip != nil {
-			addresses = append(addresses, ip.String())
+	if doUpdateHostsFile(n, sb) {
+		address := ""
+		if ip := ep.getFirstInterfaceAddress(); ip != nil {
+			address = ip.String()
 		}
-		if ip := ep.getFirstInterfaceIPv6Address(); ip != nil {
-			addresses = append(addresses, ip.String())
-		}
-		if err = sb.updateHostsFile(addresses); err != nil {
+		if err = sb.updateHostsFile(address); err != nil {
 			return err
 		}
 	}
@@ -480,7 +507,9 @@ func (ep *Endpoint) sbJoin(sb *Sandbox, options ...EndpointOption) (err error) {
 	// Current endpoint providing external connectivity for the sandbox
 	extEp := sb.getGatewayEndpoint()
 
-	sb.addEndpoint(ep)
+	sb.Lock()
+	heap.Push(&sb.endpoints, ep)
+	sb.Unlock()
 	defer func() {
 		if err != nil {
 			sb.removeEndpoint(ep)
@@ -506,12 +535,6 @@ func (ep *Endpoint) sbJoin(sb *Sandbox, options ...EndpointOption) (err error) {
 			}
 		}
 	}()
-
-	// Load balancing endpoints should never have a default gateway nor
-	// should they alter the status of a network's default gateway
-	if ep.loadBalancer && !sb.ingress {
-		return nil
-	}
 
 	if sb.needDefaultGW() && sb.getEndpointInGWNetwork() == nil {
 		return sb.setupDefaultGW()
@@ -552,6 +575,7 @@ func (ep *Endpoint) sbJoin(sb *Sandbox, options ...EndpointOption) (err error) {
 					ep.Name(), ep.ID(), err)
 			}
 		}
+
 	}
 
 	if !sb.needDefaultGW() {
@@ -564,7 +588,11 @@ func (ep *Endpoint) sbJoin(sb *Sandbox, options ...EndpointOption) (err error) {
 	return nil
 }
 
-func (ep *Endpoint) rename(name string) error {
+func doUpdateHostsFile(n *network, sb *sandbox) bool {
+	return !n.ingress && n.Name() != libnGWNetwork
+}
+
+func (ep *endpoint) rename(name string) error {
 	var (
 		err      error
 		netWatch *netWatch
@@ -589,9 +617,9 @@ func (ep *Endpoint) rename(name string) error {
 			return types.InternalErrorf("Could not delete service state for endpoint %s from cluster on rename: %v", ep.Name(), err)
 		}
 	} else {
-		c.mu.Lock()
+		c.Lock()
 		netWatch, ok = c.nmap[n.ID()]
-		c.mu.Unlock()
+		c.Unlock()
 		if !ok {
 			return fmt.Errorf("watch null for network %q", n.Name())
 		}
@@ -609,14 +637,10 @@ func (ep *Endpoint) rename(name string) error {
 		}
 		defer func() {
 			if err != nil {
-				if err2 := ep.deleteServiceInfoFromCluster(sb, true, "rename"); err2 != nil {
-					logrus.WithField("main error", err).WithError(err2).Debug("Error during cleanup due deleting service info from cluster while cleaning up due to other error")
-				}
+				ep.deleteServiceInfoFromCluster(sb, true, "rename")
 				ep.name = oldName
 				ep.anonymous = oldAnonymous
-				if err2 := ep.addServiceInfoToCluster(sb); err2 != nil {
-					logrus.WithField("main error", err).WithError(err2).Debug("Error during cleanup due adding service to from cluster while cleaning up due to other error")
-				}
+				ep.addServiceInfoToCluster(sb)
 			}
 		}()
 	} else {
@@ -642,22 +666,26 @@ func (ep *Endpoint) rename(name string) error {
 	// benign error. Besides there is no meaningful recovery that
 	// we can do. When the cluster recovers subsequent EpCnt update
 	// will force the peers to get the correct EP name.
-	_ = n.getEpCnt().updateStore()
+	n.getEpCnt().updateStore()
 
 	return err
 }
 
-func (ep *Endpoint) hasInterface(iName string) bool {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
+func (ep *endpoint) hasInterface(iName string) bool {
+	ep.Lock()
+	defer ep.Unlock()
 
 	return ep.iface != nil && ep.iface.srcName == iName
 }
 
-// Leave detaches the network resources populated in the sandbox.
-func (ep *Endpoint) Leave(sb *Sandbox, options ...EndpointOption) error {
-	if sb == nil || sb.ID() == "" || sb.Key() == "" {
-		return types.BadRequestErrorf("invalid Sandbox passed to endpoint leave: %v", sb)
+func (ep *endpoint) Leave(sbox Sandbox, options ...EndpointOption) error {
+	if sbox == nil || sbox.ID() == "" || sbox.Key() == "" {
+		return types.BadRequestErrorf("invalid Sandbox passed to endpoint leave: %v", sbox)
+	}
+
+	sb, ok := sbox.(*sandbox)
+	if !ok {
+		return types.BadRequestErrorf("not a valid Sandbox interface")
 	}
 
 	sb.joinLeaveStart()
@@ -666,7 +694,7 @@ func (ep *Endpoint) Leave(sb *Sandbox, options ...EndpointOption) error {
 	return ep.sbLeave(sb, false, options...)
 }
 
-func (ep *Endpoint) sbLeave(sb *Sandbox, force bool, options ...EndpointOption) error {
+func (ep *endpoint) sbLeave(sb *sandbox, force bool, options ...EndpointOption) error {
 	n, err := ep.getNetworkFromStore()
 	if err != nil {
 		return fmt.Errorf("failed to get network from store during leave: %v", err)
@@ -677,9 +705,9 @@ func (ep *Endpoint) sbLeave(sb *Sandbox, force bool, options ...EndpointOption) 
 		return fmt.Errorf("failed to get endpoint from store during leave: %v", err)
 	}
 
-	ep.mu.Lock()
+	ep.Lock()
 	sid := ep.sandboxID
-	ep.mu.Unlock()
+	ep.Unlock()
 
 	if sid == "" {
 		return types.ForbiddenErrorf("cannot leave endpoint with no attached sandbox")
@@ -695,10 +723,10 @@ func (ep *Endpoint) sbLeave(sb *Sandbox, force bool, options ...EndpointOption) 
 		return fmt.Errorf("failed to get driver during endpoint leave: %v", err)
 	}
 
-	ep.mu.Lock()
+	ep.Lock()
 	ep.sandboxID = ""
 	ep.network = n
-	ep.mu.Unlock()
+	ep.Unlock()
 
 	// Current endpoint providing external connectivity to the sandbox
 	extEp := sb.getGatewayEndpoint()
@@ -774,8 +802,7 @@ func (ep *Endpoint) sbLeave(sb *Sandbox, force bool, options ...EndpointOption) 
 	return nil
 }
 
-// Delete deletes and detaches this endpoint from the network.
-func (ep *Endpoint) Delete(force bool) error {
+func (ep *endpoint) Delete(force bool) error {
 	var err error
 	n, err := ep.getNetworkFromStore()
 	if err != nil {
@@ -787,11 +814,11 @@ func (ep *Endpoint) Delete(force bool) error {
 		return fmt.Errorf("failed to get endpoint from store during Delete: %v", err)
 	}
 
-	ep.mu.Lock()
+	ep.Lock()
 	epid := ep.id
 	name := ep.name
 	sbid := ep.sandboxID
-	ep.mu.Unlock()
+	ep.Unlock()
 
 	sb, _ := n.getController().SandboxByID(sbid)
 	if sb != nil && !force {
@@ -799,7 +826,7 @@ func (ep *Endpoint) Delete(force bool) error {
 	}
 
 	if sb != nil {
-		if e := ep.sbLeave(sb, force); e != nil {
+		if e := ep.sbLeave(sb.(*sandbox), force); e != nil {
 			logrus.Warnf("failed to leave sandbox for endpoint %s : %v", name, e)
 		}
 	}
@@ -833,12 +860,12 @@ func (ep *Endpoint) Delete(force bool) error {
 	return nil
 }
 
-func (ep *Endpoint) deleteEndpoint(force bool) error {
-	ep.mu.Lock()
+func (ep *endpoint) deleteEndpoint(force bool) error {
+	ep.Lock()
 	n := ep.network
 	name := ep.name
 	epid := ep.id
-	ep.mu.Unlock()
+	ep.Unlock()
 
 	driver, err := n.driver(!force)
 	if err != nil {
@@ -862,22 +889,22 @@ func (ep *Endpoint) deleteEndpoint(force bool) error {
 	return nil
 }
 
-func (ep *Endpoint) getSandbox() (*Sandbox, bool) {
+func (ep *endpoint) getSandbox() (*sandbox, bool) {
 	c := ep.network.getController()
-	ep.mu.Lock()
+	ep.Lock()
 	sid := ep.sandboxID
-	ep.mu.Unlock()
+	ep.Unlock()
 
-	c.mu.Lock()
+	c.Lock()
 	ps, ok := c.sandboxes[sid]
-	c.mu.Unlock()
+	c.Unlock()
 
 	return ps, ok
 }
 
-func (ep *Endpoint) getFirstInterfaceIPv4Address() net.IP {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
+func (ep *endpoint) getFirstInterfaceAddress() net.IP {
+	ep.Lock()
+	defer ep.Unlock()
 
 	if ep.iface.addr != nil {
 		return ep.iface.addr.IP
@@ -886,21 +913,10 @@ func (ep *Endpoint) getFirstInterfaceIPv4Address() net.IP {
 	return nil
 }
 
-func (ep *Endpoint) getFirstInterfaceIPv6Address() net.IP {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
-
-	if ep.iface.addrv6 != nil {
-		return ep.iface.addrv6.IP
-	}
-
-	return nil
-}
-
 // EndpointOptionGeneric function returns an option setter for a Generic option defined
 // in a Dictionary of Key-Value pair
 func EndpointOptionGeneric(generic map[string]interface{}) EndpointOption {
-	return func(ep *Endpoint) {
+	return func(ep *endpoint) {
 		for k, v := range generic {
 			ep.generic[k] = v
 		}
@@ -914,7 +930,7 @@ var (
 
 // CreateOptionIpam function returns an option setter for the ipam configuration for this endpoint
 func CreateOptionIpam(ipV4, ipV6 net.IP, llIPs []net.IP, ipamOptions map[string]string) EndpointOption {
-	return func(ep *Endpoint) {
+	return func(ep *endpoint) {
 		ep.prefAddress = ipV4
 		ep.prefAddressV6 = ipV6
 		if len(llIPs) != 0 {
@@ -933,7 +949,7 @@ func CreateOptionIpam(ipV4, ipV6 net.IP, llIPs []net.IP, ipamOptions map[string]
 // CreateOptionExposedPorts function returns an option setter for the container exposed
 // ports option to be passed to network.CreateEndpoint() method.
 func CreateOptionExposedPorts(exposedPorts []types.TransportPort) EndpointOption {
-	return func(ep *Endpoint) {
+	return func(ep *endpoint) {
 		// Defensive copy
 		eps := make([]types.TransportPort, len(exposedPorts))
 		copy(eps, exposedPorts)
@@ -946,7 +962,7 @@ func CreateOptionExposedPorts(exposedPorts []types.TransportPort) EndpointOption
 // CreateOptionPortMapping function returns an option setter for the mapping
 // ports option to be passed to network.CreateEndpoint() method.
 func CreateOptionPortMapping(portBindings []types.PortBinding) EndpointOption {
-	return func(ep *Endpoint) {
+	return func(ep *endpoint) {
 		// Store a copy of the bindings as generic data to pass to the driver
 		pbs := make([]types.PortBinding, len(portBindings))
 		copy(pbs, portBindings)
@@ -957,7 +973,7 @@ func CreateOptionPortMapping(portBindings []types.PortBinding) EndpointOption {
 // CreateOptionDNS function returns an option setter for dns entry option to
 // be passed to container Create method.
 func CreateOptionDNS(dns []string) EndpointOption {
-	return func(ep *Endpoint) {
+	return func(ep *endpoint) {
 		ep.generic[netlabel.DNSServers] = dns
 	}
 }
@@ -965,7 +981,7 @@ func CreateOptionDNS(dns []string) EndpointOption {
 // CreateOptionAnonymous function returns an option setter for setting
 // this endpoint as anonymous
 func CreateOptionAnonymous() EndpointOption {
-	return func(ep *Endpoint) {
+	return func(ep *endpoint) {
 		ep.anonymous = true
 	}
 }
@@ -973,14 +989,14 @@ func CreateOptionAnonymous() EndpointOption {
 // CreateOptionDisableResolution function returns an option setter to indicate
 // this endpoint doesn't want embedded DNS server functionality
 func CreateOptionDisableResolution() EndpointOption {
-	return func(ep *Endpoint) {
+	return func(ep *endpoint) {
 		ep.disableResolution = true
 	}
 }
 
-// CreateOptionAlias function returns an option setter for setting endpoint alias
+//CreateOptionAlias function returns an option setter for setting endpoint alias
 func CreateOptionAlias(name string, alias string) EndpointOption {
-	return func(ep *Endpoint) {
+	return func(ep *endpoint) {
 		if ep.aliases == nil {
 			ep.aliases = make(map[string]string)
 		}
@@ -990,7 +1006,7 @@ func CreateOptionAlias(name string, alias string) EndpointOption {
 
 // CreateOptionService function returns an option setter for setting service binding configuration
 func CreateOptionService(name, id string, vip net.IP, ingressPorts []*PortConfig, aliases []string) EndpointOption {
-	return func(ep *Endpoint) {
+	return func(ep *endpoint) {
 		ep.svcName = name
 		ep.svcID = id
 		ep.virtualIP = vip
@@ -999,29 +1015,22 @@ func CreateOptionService(name, id string, vip net.IP, ingressPorts []*PortConfig
 	}
 }
 
-// CreateOptionMyAlias function returns an option setter for setting endpoint's self alias
+//CreateOptionMyAlias function returns an option setter for setting endpoint's self alias
 func CreateOptionMyAlias(alias string) EndpointOption {
-	return func(ep *Endpoint) {
+	return func(ep *endpoint) {
 		ep.myAliases = append(ep.myAliases, alias)
-	}
-}
-
-// CreateOptionLoadBalancer function returns an option setter for denoting the endpoint is a load balancer for a network
-func CreateOptionLoadBalancer() EndpointOption {
-	return func(ep *Endpoint) {
-		ep.loadBalancer = true
 	}
 }
 
 // JoinOptionPriority function returns an option setter for priority option to
 // be passed to the endpoint.Join() method.
-func JoinOptionPriority(prio int) EndpointOption {
-	return func(ep *Endpoint) {
+func JoinOptionPriority(ep Endpoint, prio int) EndpointOption {
+	return func(ep *endpoint) {
 		// ep lock already acquired
 		c := ep.network.getController()
-		c.mu.Lock()
+		c.Lock()
 		sb, ok := c.sandboxes[ep.sandboxID]
-		c.mu.Unlock()
+		c.Unlock()
 		if !ok {
 			logrus.Errorf("Could not set endpoint priority value during Join to endpoint %s: No sandbox id present in endpoint", ep.id)
 			return
@@ -1030,11 +1039,11 @@ func JoinOptionPriority(prio int) EndpointOption {
 	}
 }
 
-func (ep *Endpoint) DataScope() string {
+func (ep *endpoint) DataScope() string {
 	return ep.getNetwork().DataScope()
 }
 
-func (ep *Endpoint) assignAddress(ipam ipamapi.Ipam, assignIPv4, assignIPv6 bool) error {
+func (ep *endpoint) assignAddress(ipam ipamapi.Ipam, assignIPv4, assignIPv6 bool) error {
 	var err error
 
 	n := ep.getNetwork()
@@ -1057,7 +1066,7 @@ func (ep *Endpoint) assignAddress(ipam ipamapi.Ipam, assignIPv4, assignIPv6 bool
 	return err
 }
 
-func (ep *Endpoint) assignAddressVersion(ipVer int, ipam ipamapi.Ipam) error {
+func (ep *endpoint) assignAddressVersion(ipVer int, ipam ipamapi.Ipam) error {
 	var (
 		poolID  *string
 		address **net.IPNet
@@ -1100,10 +1109,10 @@ func (ep *Endpoint) assignAddressVersion(ipVer int, ipam ipamapi.Ipam) error {
 		}
 		addr, _, err := ipam.RequestAddress(d.PoolID, progAdd, ep.ipamOptions)
 		if err == nil {
-			ep.mu.Lock()
+			ep.Lock()
 			*address = addr
 			*poolID = d.PoolID
-			ep.mu.Unlock()
+			ep.Unlock()
 			return nil
 		}
 		if err != ipamapi.ErrNoAvailableIPs || progAdd != nil {
@@ -1116,7 +1125,7 @@ func (ep *Endpoint) assignAddressVersion(ipVer int, ipam ipamapi.Ipam) error {
 	return fmt.Errorf("no available IPv%d addresses on this network's address pools: %s (%s)", ipVer, n.Name(), n.ID())
 }
 
-func (ep *Endpoint) releaseAddress() {
+func (ep *endpoint) releaseAddress() {
 	n := ep.getNetwork()
 	if n.hasSpecialDriver() {
 		return
@@ -1143,7 +1152,7 @@ func (ep *Endpoint) releaseAddress() {
 	}
 }
 
-func (c *Controller) cleanupLocalEndpoints() {
+func (c *controller) cleanupLocalEndpoints() {
 	// Get used endpoints
 	eps := make(map[string]interface{})
 	for _, sb := range c.sandboxes {
@@ -1151,7 +1160,7 @@ func (c *Controller) cleanupLocalEndpoints() {
 			eps[ep.id] = true
 		}
 	}
-	nl, err := c.getNetworks()
+	nl, err := c.getNetworksForScope(datastore.LocalScope)
 	if err != nil {
 		logrus.Warnf("Could not get list of networks during endpoint cleanup: %v", err)
 		return
@@ -1186,9 +1195,7 @@ func (c *Controller) cleanupLocalEndpoints() {
 		epCnt := n.getEpCnt().EndpointCnt()
 		if epCnt != uint64(len(epl)) {
 			logrus.Infof("Fixing inconsistent endpoint_cnt for network %s. Expected=%d, Actual=%d", n.name, len(epl), epCnt)
-			if err := n.getEpCnt().setCnt(uint64(len(epl))); err != nil {
-				logrus.WithField("network", n.name).WithError(err).Warn("Error while fixing inconsistent endpoint_cnt for network")
-			}
+			n.getEpCnt().setCnt(uint64(len(epl)))
 		}
 	}
 }

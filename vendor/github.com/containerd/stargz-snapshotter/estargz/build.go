@@ -36,6 +36,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/docker/docker/myos"
 	"github.com/containerd/stargz-snapshotter/estargz/errorutil"
 	"github.com/klauspost/compress/zstd"
 	digest "github.com/opencontainers/go-digest"
@@ -566,7 +567,7 @@ type tempFiles struct {
 }
 
 func (tf *tempFiles) TempFile(dir, pattern string) (*os.File, error) {
-	f, err := os.CreateTemp(dir, pattern)
+	f, err := myos.CreateTemp(dir, pattern)
 	if err != nil {
 		return nil, err
 	}

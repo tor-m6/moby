@@ -2,9 +2,10 @@ package remotecontext // import "github.com/docker/docker/builder/remotecontext"
 
 import (
 	"os"
-	"path/filepath"
+	// "path/filepath"
 	"sync"
 
+	"github.com/docker/docker/myfilepath"
 	iradix "github.com/hashicorp/go-immutable-radix"
 	"github.com/opencontainers/go-digest"
 	"github.com/pkg/errors"
@@ -66,7 +67,7 @@ func (cs *CachableSource) Scan() error {
 		return err
 	}
 	txn := iradix.New().Txn()
-	err = filepath.WalkDir(cs.root, func(path string, _ os.DirEntry, err error) error {
+	err = myfilepath.WalkDir(cs.root, func(path string, _ os.FileInfo, err error) error {
 		if err != nil {
 			return errors.Wrapf(err, "failed to walk %s", path)
 		}

@@ -15,6 +15,7 @@ package util
 
 import (
 	"io"
+	"io/ioutil"
 	"os"
 )
 
@@ -33,5 +34,5 @@ func ReadFileNoStat(filename string) ([]byte, error) {
 	defer f.Close()
 
 	reader := io.LimitReader(f, maxBufferSize)
-	return io.ReadAll(reader)
+	return ioutil.ReadAll(reader)
 }

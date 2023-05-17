@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"github.com/docker/docker/myos"
 	"path/filepath"
 	"sync"
 	"syscall"
@@ -38,7 +39,7 @@ func NewFIFOSetInDir(root, id string, terminal bool) (*FIFOSet, error) {
 			return nil, err
 		}
 	}
-	dir, err := os.MkdirTemp(root, "")
+	dir, err := myos.MkdirTemp(root, "")
 	if err != nil {
 		return nil, err
 	}

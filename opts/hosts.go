@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"github.com/docker/docker/mystrings"
 
 	"github.com/docker/docker/pkg/homedir"
 	"github.com/pkg/errors"
@@ -77,7 +78,7 @@ func ParseHost(defaultToTLS, defaultToUnixXDG bool, val string) (string, error) 
 // parseDaemonHost parses the specified address and returns an address that will be used as the host.
 // Depending on the address specified, this may return one of the global Default* strings defined in hosts.go.
 func parseDaemonHost(address string) (string, error) {
-	proto, addr, ok := strings.Cut(address, "://")
+	proto, addr, ok := mystrings.Cut(address, "://")
 	if !ok && proto != "" {
 		addr = proto
 		proto = "tcp"
@@ -179,7 +180,7 @@ func parseTCPAddr(address string, strict bool) (*url.URL, error) {
 // ExtraHost is in the form of name:ip where the ip has to be a valid ip (IPv4 or IPv6).
 func ValidateExtraHost(val string) (string, error) {
 	// allow for IPv6 addresses in extra hosts by only splitting on first ":"
-	name, ip, ok := strings.Cut(val, ":")
+	name, ip, ok := mystrings.Cut(val, ":")
 	if !ok || name == "" {
 		return "", errors.Errorf("bad format for add-host: %q", val)
 	}

@@ -8,13 +8,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/docker/docker/libnetwork/discoverapi"
-	"github.com/docker/docker/libnetwork/types"
 	"github.com/docker/libkv"
 	"github.com/docker/libkv/store"
+	"github.com/docker/libnetwork/discoverapi"
+	"github.com/docker/libnetwork/types"
 )
 
-// DataStore exported
+//DataStore exported
 type DataStore interface {
 	// GetObject gets data from datastore and unmarshals to the specified object
 	GetObject(key string, o KVObject) error
@@ -114,7 +114,7 @@ type ScopeClientCfg struct {
 const (
 	// LocalScope indicates to store the KV object in local datastore such as boltdb
 	LocalScope = "local"
-	// GlobalScope indicates to store the KV object in global datastore
+	// GlobalScope indicates to store the KV object in global datastore such as consul/etcd/zookeeper
 	GlobalScope = "global"
 	// SwarmScope is not indicating a datastore location. It is defined here
 	// along with the other two scopes just for consistency.
@@ -129,28 +129,38 @@ const (
 	EndpointKeyPrefix = "endpoint"
 )
 
-var defaultRootChain = []string{"docker", "network", "v1.0"}
-var rootChain = defaultRootChain
+var (
+	defaultScopes = makeDefaultScopes()
+)
 
-// DefaultScope returns a default scope config for clients to use.
-func DefaultScope(dataDir string) ScopeCfg {
-	var dbpath string
-	if dataDir == "" {
-		dbpath = defaultPrefix + "/local-kv.db"
-	} else {
-		dbpath = dataDir + "/network/files/local-kv.db"
-	}
-
-	return ScopeCfg{
+func makeDefaultScopes() map[string]*ScopeCfg {
+	def := make(map[string]*ScopeCfg)
+	def[LocalScope] = &ScopeCfg{
 		Client: ScopeClientCfg{
 			Provider: string(store.BOLTDB),
-			Address:  dbpath,
+			Address:  defaultPrefix + "/local-kv.db",
 			Config: &store.Config{
 				Bucket:            "libnetwork",
 				ConnectionTimeout: time.Minute,
 			},
 		},
 	}
+
+	return def
+}
+
+var defaultRootChain = []string{"docker", "network", "v1.0"}
+var rootChain = defaultRootChain
+
+// DefaultScopes returns a map of default scopes and its config for clients to use.
+func DefaultScopes(dataDir string) map[string]*ScopeCfg {
+	if dataDir != "" {
+		defaultScopes[LocalScope].Client.Address = dataDir + "/network/files/local-kv.db"
+		return defaultScopes
+	}
+
+	defaultScopes[LocalScope].Client.Address = defaultPrefix + "/local-kv.db"
+	return defaultScopes
 }
 
 // IsValid checks if the scope config has valid configuration.
@@ -164,18 +174,18 @@ func (cfg *ScopeCfg) IsValid() bool {
 	return true
 }
 
-// Key provides convenient method to create a Key
+//Key provides convenient method to create a Key
 func Key(key ...string) string {
 	keychain := append(rootChain, key...)
 	str := strings.Join(keychain, "/")
 	return str + "/"
 }
 
-// ParseKey provides convenient method to unpack the key to complement the Key function
+//ParseKey provides convenient method to unpack the key to complement the Key function
 func ParseKey(key string) ([]string, error) {
 	chain := strings.Split(strings.Trim(key, "/"), "/")
 
-	// The key must at least be equal to the rootChain in order to be considered as valid
+	// The key must atleast be equal to the rootChain in order to be considered as valid
 	if len(chain) <= len(rootChain) || !reflect.DeepEqual(chain[0:len(rootChain)], rootChain) {
 		return nil, types.BadRequestErrorf("invalid Key : %s", key)
 	}
@@ -183,7 +193,16 @@ func ParseKey(key string) ([]string, error) {
 }
 
 // newClient used to connect to KV Store
-func newClient(kv string, addr string, config *store.Config) (DataStore, error) {
+func newClient(scope string, kv string, addr string, config *store.Config, cached bool) (DataStore, error) {
+
+	if cached && scope != LocalScope {
+		return nil, fmt.Errorf("caching supported only for scope %s", LocalScope)
+	}
+	sequential := false
+	if scope == LocalScope {
+		sequential = true
+	}
+
 	if config == nil {
 		config = &store.Config{}
 	}
@@ -204,24 +223,36 @@ func newClient(kv string, addr string, config *store.Config) (DataStore, error) 
 		}
 	}
 
-	s, err := libkv.NewStore(store.Backend(kv), addrs, config)
+	store, err := libkv.NewStore(store.Backend(kv), addrs, config)
 	if err != nil {
 		return nil, err
 	}
 
-	ds := &datastore{scope: LocalScope, store: s, active: true, watchCh: make(chan struct{}), sequential: true}
-	ds.cache = newCache(ds)
+	ds := &datastore{scope: scope, store: store, active: true, watchCh: make(chan struct{}), sequential: sequential}
+	if cached {
+		ds.cache = newCache(ds)
+	}
 
 	return ds, nil
 }
 
 // NewDataStore creates a new instance of LibKV data store
-func NewDataStore(cfg ScopeCfg) (DataStore, error) {
-	if cfg.Client.Provider == "" || cfg.Client.Address == "" {
-		cfg = DefaultScope("")
+func NewDataStore(scope string, cfg *ScopeCfg) (DataStore, error) {
+	if cfg == nil || cfg.Client.Provider == "" || cfg.Client.Address == "" {
+		c, ok := defaultScopes[scope]
+		if !ok || c.Client.Provider == "" || c.Client.Address == "" {
+			return nil, fmt.Errorf("unexpected scope %s without configuration passed", scope)
+		}
+
+		cfg = c
 	}
 
-	return newClient(cfg.Client.Provider, cfg.Client.Address, cfg.Client.Config)
+	var cached bool
+	if scope == LocalScope {
+		cached = true
+	}
+
+	return newClient(scope, cfg.Client.Provider, cfg.Client.Address, cfg.Client.Config, cached)
 }
 
 // NewDataStoreFromConfig creates a new instance of LibKV data store starting from the datastore config data
@@ -236,7 +267,7 @@ func NewDataStoreFromConfig(dsc discoverapi.DatastoreConfigData) (DataStore, err
 		return nil, fmt.Errorf("cannot parse store configuration: %v", dsc.Config)
 	}
 
-	scopeCfg := ScopeCfg{
+	scopeCfg := &ScopeCfg{
 		Client: ScopeClientCfg{
 			Address:  dsc.Address,
 			Provider: dsc.Provider,
@@ -244,7 +275,7 @@ func NewDataStoreFromConfig(dsc discoverapi.DatastoreConfigData) (DataStore, err
 		},
 	}
 
-	ds, err := NewDataStore(scopeCfg)
+	ds, err := NewDataStore(dsc.Scope, scopeCfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to construct datastore client from datastore configuration %v: %v", dsc, err)
 	}
@@ -558,7 +589,7 @@ func (ds *datastore) DeleteObject(kvObject KVObject) error {
 		defer ds.Unlock()
 	}
 
-	// cleanup the cache first
+	// cleaup the cache first
 	if ds.cache != nil {
 		// If persistent store is skipped, sequencing needs to
 		// happen in cache.
@@ -614,7 +645,7 @@ func (ds *datastore) DeleteTree(kvObject KVObject) error {
 		defer ds.Unlock()
 	}
 
-	// cleanup the cache first
+	// cleaup the cache first
 	if ds.cache != nil {
 		// If persistent store is skipped, sequencing needs to
 		// happen in cache.

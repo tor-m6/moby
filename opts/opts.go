@@ -6,6 +6,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"github.com/docker/docker/mystrings"
 
 	units "github.com/docker/go-units"
 )
@@ -183,11 +184,11 @@ func (opts *MapMapOpts) Set(value string) error {
 		}
 		value = v
 	}
-	rk, rv, found := strings.Cut(value, "=")
+	rk, rv, found := mystrings.Cut(value, "=")
 	if !found {
 		return fmt.Errorf("invalid value %q for map option, should be root-key=key=value", value)
 	}
-	k, v, found := strings.Cut(rv, "=")
+	k, v, found := mystrings.Cut(rv, "=")
 	if !found {
 		return fmt.Errorf("invalid value %q for map option, should be root-key=key=value", value)
 	}
@@ -239,7 +240,7 @@ func (opts *MapOpts) Set(value string) error {
 		}
 		value = v
 	}
-	k, v, _ := strings.Cut(value, "=")
+	k, v, _ := mystrings.Cut(value, "=")
 	(opts.values)[k] = v
 	return nil
 }

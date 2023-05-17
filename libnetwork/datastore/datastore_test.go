@@ -5,8 +5,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/docker/docker/libnetwork/options"
-	"gotest.tools/v3/assert"
+	"github.com/docker/libnetwork/options"
+	_ "github.com/docker/libnetwork/testutils"
+	"github.com/stretchr/testify/assert"
 )
 
 var dummyKey = "dummy"
@@ -36,13 +37,10 @@ func TestParseKey(t *testing.T) {
 }
 
 func TestInvalidDataStore(t *testing.T) {
-	config := ScopeCfg{
-		Client: ScopeClientCfg{
-			Provider: "invalid",
-			Address:  "localhost:8500",
-		},
-	}
-	_, err := NewDataStore(config)
+	config := &ScopeCfg{}
+	config.Client.Provider = "invalid"
+	config.Client.Address = "localhost:8500"
+	_, err := NewDataStore(GlobalScope, config)
 	if err == nil {
 		t.Fatal("Invalid Datastore connection configuration must result in a failure")
 	}
@@ -70,12 +68,12 @@ func TestKVObjectFlatKey(t *testing.T) {
 func TestAtomicKVObjectFlatKey(t *testing.T) {
 	store := NewTestDataStore()
 	expected := dummyKVObject("1111", true)
-	assert.Check(t, !expected.Exists())
+	assert.False(t, expected.Exists())
 	err := store.PutObjectAtomic(expected)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assert.Check(t, expected.Exists())
+	assert.True(t, expected.Exists())
 
 	// PutObjectAtomic automatically sets the Index again. Hence the following must pass.
 
@@ -106,11 +104,12 @@ func TestAtomicKVObjectFlatKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assert.Check(t, newObj.Exists())
+	assert.True(t, newObj.Exists())
 	err = store.PutObjectAtomic(&n)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 }
 
 // dummy data used to test the datastore

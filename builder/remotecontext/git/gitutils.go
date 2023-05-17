@@ -7,7 +7,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"github.com/docker/docker/mystrings"
 
+	"github.com/docker/docker/myos"
 	"github.com/moby/sys/symlink"
 	"github.com/pkg/errors"
 )
@@ -50,7 +52,7 @@ func Clone(remoteURL string, opts ...CloneOption) (string, error) {
 func (repo gitRepo) clone() (checkoutDir string, err error) {
 	fetch := fetchArgs(repo.remote, repo.ref)
 
-	root, err := os.MkdirTemp("", "docker-build-git")
+	root, err := myos.MkdirTemp("", "docker-build-git")
 	if err != nil {
 		return "", err
 	}
@@ -100,7 +102,7 @@ func parseRemoteURL(remoteURL string) (gitRepo, error) {
 	if strings.HasPrefix(remoteURL, "git@") {
 		// git@.. is not an URL, so cannot be parsed as URL
 		var fragment string
-		repo.remote, fragment, _ = strings.Cut(remoteURL, "#")
+		repo.remote, fragment, _ = mystrings.Cut(remoteURL, "#")
 		repo.ref, repo.subdir = getRefAndSubdir(fragment)
 	} else {
 		u, err := url.Parse(remoteURL)
@@ -121,7 +123,7 @@ func parseRemoteURL(remoteURL string) (gitRepo, error) {
 }
 
 func getRefAndSubdir(fragment string) (ref string, subdir string) {
-	ref, subdir, _ = strings.Cut(fragment, ":")
+	ref, subdir, _ = mystrings.Cut(fragment, ":")
 	if ref == "" {
 		ref = "master"
 	}

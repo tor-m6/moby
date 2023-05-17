@@ -7,12 +7,13 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"github.com/docker/docker/mystrings"
 )
 
 // ParseKeyValueOpt parses and validates the specified string as a key/value
 // pair (key=value).
 func ParseKeyValueOpt(opt string) (key string, value string, err error) {
-	k, v, ok := strings.Cut(opt, "=")
+	k, v, ok := mystrings.Cut(opt, "=")
 	if !ok {
 		return "", "", fmt.Errorf("unable to parse key/value option: %s", opt)
 	}
@@ -76,7 +77,7 @@ func parseUintList(val string, maximum int) (map[int]bool, error) {
 			}
 			availableInts[v] = true
 		} else {
-			minS, maxS, _ := strings.Cut(r, "-")
+			minS, maxS, _ := mystrings.Cut(r, "-")
 			min, err := strconv.Atoi(minS)
 			if err != nil {
 				return nil, errInvalidFormat

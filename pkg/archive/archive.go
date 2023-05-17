@@ -20,6 +20,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/docker/docker/myos"
+	"github.com/docker/docker/myfilepath"
 	"github.com/containerd/containerd/pkg/userns"
 	"github.com/docker/docker/pkg/idtools"
 	"github.com/docker/docker/pkg/ioutils"
@@ -945,7 +947,7 @@ func (t *Tarballer) Do() {
 		)
 
 		walkRoot := getWalkRoot(t.srcPath, include)
-		filepath.WalkDir(walkRoot, func(filePath string, f os.DirEntry, err error) error {
+		myfilepath.WalkDir(walkRoot, func(filePath string, f os.FileInfo, err error) error {
 			if err != nil {
 				logrus.Errorf("Tar: Can't stat file %s to tar: %s", t.srcPath, err)
 				return nil
@@ -1432,7 +1434,7 @@ func cmdStream(cmd *exec.Cmd, input io.Reader) (io.ReadCloser, error) {
 // of that file as an archive. The archive can only be read once - as soon as reading completes,
 // the file will be deleted.
 func NewTempArchive(src io.Reader, dir string) (*TempArchive, error) {
-	f, err := os.CreateTemp(dir, "")
+	f, err := myos.CreateTemp(dir, "")
 	if err != nil {
 		return nil, err
 	}

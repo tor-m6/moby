@@ -24,7 +24,6 @@ type detector struct {
 }
 
 var ServiceName string
-var Recorder *TraceRecorder
 
 var detectors map[string]detector
 var once sync.Once
@@ -73,31 +72,16 @@ func detectExporter() (sdktrace.SpanExporter, error) {
 	return nil, nil
 }
 
-func getExporter() (sdktrace.SpanExporter, error) {
-	exp, err := detectExporter()
-	if err != nil {
-		return nil, err
-	}
-
-	if exp != nil {
-		exp = &threadSafeExporterWrapper{
-			exporter: exp,
-		}
-	}
-
-	if Recorder != nil {
-		Recorder.SpanExporter = exp
-		exp = Recorder
-	}
-	return exp, nil
-}
-
 func detect() error {
 	tp = trace.NewNoopTracerProvider()
 
-	exp, err := getExporter()
-	if err != nil || exp == nil {
+	exp, err := detectExporter()
+	if err != nil {
 		return err
+	}
+
+	if exp == nil {
+		return nil
 	}
 
 	// enable log with traceID when valid exporter
@@ -114,10 +98,6 @@ func detect() error {
 
 	sp := sdktrace.NewBatchSpanProcessor(exp)
 
-	if Recorder != nil {
-		Recorder.flush = sp.ForceFlush
-	}
-
 	sdktp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sp), sdktrace.WithResource(res))
 	closers = append(closers, sdktp.Shutdown)
 
@@ -132,7 +112,7 @@ func TracerProvider() (trace.TracerProvider, error) {
 			err = err1
 		}
 	})
-	b, _ := strconv.ParseBool(os.Getenv("OTEL_IGNORE_ERROR"))
+	b, _ := strconv.ParseBool(os.Getenv("OTEL_INGORE_ERROR"))
 	if err != nil && !b {
 		return nil, err
 	}

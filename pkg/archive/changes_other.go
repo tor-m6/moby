@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/docker/docker/myfilepath"
 	"github.com/docker/docker/pkg/system"
 )
 
@@ -41,7 +42,7 @@ func collectFileInfoForChanges(oldDir, newDir string) (*FileInfo, *FileInfo, err
 func collectFileInfo(sourceDir string) (*FileInfo, error) {
 	root := newRootFileInfo()
 
-	err := filepath.WalkDir(sourceDir, func(path string, _ os.DirEntry, err error) error {
+	err := myfilepath.WalkDir(sourceDir, func(path string, _ os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}

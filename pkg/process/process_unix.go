@@ -6,6 +6,7 @@ package process
 import (
 	"bytes"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -68,7 +69,7 @@ func Zombie(pid int) (bool, error) {
 	if pid < 1 {
 		return false, nil
 	}
-	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	data, err := ioutil.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false, nil

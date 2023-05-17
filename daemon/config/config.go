@@ -7,10 +7,12 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"io/ioutil"
 	"path/filepath"
 	"strings"
 	"sync"
 
+	"github.com/docker/docker/mystrings"
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"
@@ -311,7 +313,7 @@ func New() (*Config, error) {
 func GetConflictFreeLabels(labels []string) ([]string, error) {
 	labelMap := map[string]string{}
 	for _, label := range labels {
-		key, val, ok := strings.Cut(label, "=")
+		key, val, ok := mystrings.Cut(label, "=")
 		if ok {
 			// If there is a conflict we will return an error
 			if v, ok := labelMap[key]; ok && v != val {
@@ -410,7 +412,7 @@ func MergeDaemonConfigurations(flagsConfig *Config, flags *pflag.FlagSet, config
 // It compares that configuration with the one provided by the flags,
 // and returns an error if there are conflicts.
 func getConflictFreeConfiguration(configFile string, flags *pflag.FlagSet) (*Config, error) {
-	b, err := os.ReadFile(configFile)
+	b, err := ioutil.ReadFile(configFile)
 	if err != nil {
 		return nil, err
 	}

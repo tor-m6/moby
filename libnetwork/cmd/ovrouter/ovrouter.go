@@ -1,6 +1,3 @@
-//go:build linux
-// +build linux
-
 package main
 
 import (
@@ -9,11 +6,12 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/docker/docker/libnetwork/driverapi"
-	"github.com/docker/docker/libnetwork/drivers/overlay"
-	"github.com/docker/docker/libnetwork/netlabel"
-	"github.com/docker/docker/libnetwork/types"
+	"github.com/docker/docker/pkg/plugingetter"
 	"github.com/docker/docker/pkg/reexec"
+	"github.com/docker/libnetwork/driverapi"
+	"github.com/docker/libnetwork/drivers/overlay"
+	"github.com/docker/libnetwork/netlabel"
+	"github.com/docker/libnetwork/types"
 	"github.com/vishvananda/netlink"
 )
 
@@ -25,6 +23,10 @@ type endpoint struct {
 	addr *net.IPNet
 	mac  net.HardwareAddr
 	name string
+}
+
+func (r *router) GetPluginGetter() plugingetter.PluginGetter {
+	return nil
 }
 
 func (r *router) RegisterDriver(name string, driver driverapi.Driver, c driverapi.Capability) error {
@@ -121,7 +123,7 @@ func main() {
 	}
 
 	r := &router{}
-	if err := overlay.Register(r, opt); err != nil {
+	if err := overlay.Init(r, opt); err != nil {
 		fmt.Printf("Failed to initialize overlay driver: %v\n", err)
 		os.Exit(1)
 	}
@@ -159,13 +161,14 @@ func main() {
 	}
 
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt)
+	signal.Notify(sigCh, os.Interrupt, os.Kill)
 
-	for range sigCh {
-		if err := r.d.Leave("testnetwork", "testep"); err != nil {
-			fmt.Printf("Error leaving: %v", err)
+	for {
+		select {
+		case <-sigCh:
+			r.d.Leave("testnetwork", "testep")
+			overlay.Fini(r.d)
+			os.Exit(0)
 		}
-		overlay.Fini(r.d)
-		os.Exit(0)
 	}
 }

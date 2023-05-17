@@ -96,17 +96,12 @@ func (e *exporter) ExportTo(ctx context.Context, t CacheExporterTarget, opt Cach
 		addRecord = *e.override
 	}
 
-	exportRecord := opt.ExportRoots
-	if len(e.k.Deps()) > 0 {
-		exportRecord = true
-	}
-
-	if e.record == nil && exportRecord {
+	if e.record == nil && len(e.k.Deps()) > 0 {
 		e.record = getBestResult(e.records)
 	}
 
 	var remote *Remote
-	if v := e.record; v != nil && exportRecord && addRecord {
+	if v := e.record; v != nil && len(e.k.Deps()) > 0 && addRecord {
 		var variants []CacheExporterRecord
 
 		cm := v.cacheManager
@@ -126,7 +121,7 @@ func (e *exporter) ExportTo(ctx context.Context, t CacheExporterTarget, opt Cach
 		if opt.CompressionOpt != nil {
 			for _, r := range remotes { // record all remaining remotes as well
 				rec := t.Add(recKey)
-				rec.AddResult(e.k.vtx, int(e.k.output), v.CreatedAt, r)
+				rec.AddResult(v.CreatedAt, r)
 				variants = append(variants, rec)
 			}
 		}
@@ -147,7 +142,7 @@ func (e *exporter) ExportTo(ctx context.Context, t CacheExporterTarget, opt Cach
 			if opt.CompressionOpt != nil {
 				for _, r := range remotes { // record all remaining remotes as well
 					rec := t.Add(recKey)
-					rec.AddResult(e.k.vtx, int(e.k.output), v.CreatedAt, r)
+					rec.AddResult(v.CreatedAt, r)
 					variants = append(variants, rec)
 				}
 			}
@@ -155,7 +150,7 @@ func (e *exporter) ExportTo(ctx context.Context, t CacheExporterTarget, opt Cach
 
 		if remote != nil {
 			for _, rec := range allRec {
-				rec.AddResult(e.k.vtx, int(e.k.output), v.CreatedAt, remote)
+				rec.AddResult(v.CreatedAt, remote)
 			}
 		}
 		allRec = append(allRec, variants...)

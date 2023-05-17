@@ -1,5 +1,5 @@
-//go:build darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris
-// +build darwin dragonfly freebsd linux netbsd openbsd solaris
+//go:build darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris || inno
+// +build darwin dragonfly freebsd linux netbsd openbsd solaris inno
 
 package user
 
@@ -8,7 +8,7 @@ import (
 	"os"
 	"strconv"
 
-	"golang.org/x/sys/unix"
+	// "golang.org/x/sys/unix"
 )
 
 // Unix-specific path to the passwd and group formatted files.
@@ -119,14 +119,14 @@ func GetGroup() (io.ReadCloser, error) {
 // user cannot be found (or there is no /etc/passwd file on the filesystem),
 // then CurrentUser returns an error.
 func CurrentUser() (User, error) {
-	return LookupUid(unix.Getuid())
+	return LookupUid(os.Getuid())
 }
 
 // CurrentGroup looks up the current user's group by their primary group id's
 // entry in /etc/passwd. If the group cannot be found (or there is no
 // /etc/group file on the filesystem), then CurrentGroup returns an error.
 func CurrentGroup() (Group, error) {
-	return LookupGid(unix.Getgid())
+	return LookupGid(os.Getgid())
 }
 
 func currentUserSubIDs(fileName string) ([]SubID, error) {

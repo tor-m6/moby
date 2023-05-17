@@ -3,10 +3,10 @@ package host
 import (
 	"sync"
 
-	"github.com/docker/docker/libnetwork/datastore"
-	"github.com/docker/docker/libnetwork/discoverapi"
-	"github.com/docker/docker/libnetwork/driverapi"
-	"github.com/docker/docker/libnetwork/types"
+	"github.com/docker/libnetwork/datastore"
+	"github.com/docker/libnetwork/discoverapi"
+	"github.com/docker/libnetwork/driverapi"
+	"github.com/docker/libnetwork/types"
 )
 
 const networkType = "host"
@@ -16,19 +16,13 @@ type driver struct {
 	sync.Mutex
 }
 
-// Init registers a new instance of host driver.
-//
-// Deprecated: use [Register].
+// Init registers a new instance of host driver
 func Init(dc driverapi.DriverCallback, config map[string]interface{}) error {
-	return Register(dc, config)
-}
-
-func Register(r driverapi.Registerer, config map[string]interface{}) error {
 	c := driverapi.Capability{
 		DataScope:         datastore.LocalScope,
 		ConnectivityScope: datastore.LocalScope,
 	}
-	return r.RegisterDriver(networkType, &driver{}, c)
+	return dc.RegisterDriver(networkType, &driver{}, c)
 }
 
 func (d *driver) NetworkAllocate(id string, option map[string]string, ipV4Data, ipV6Data []driverapi.IPAMData) (map[string]string, error) {
@@ -72,7 +66,7 @@ func (d *driver) DeleteEndpoint(nid, eid string) error {
 }
 
 func (d *driver) EndpointOperInfo(nid, eid string) (map[string]interface{}, error) {
-	return make(map[string]interface{}), nil
+	return make(map[string]interface{}, 0), nil
 }
 
 // Join method is invoked when a Sandbox is attached to an endpoint.

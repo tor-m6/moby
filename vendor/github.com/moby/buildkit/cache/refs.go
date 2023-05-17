@@ -3,6 +3,7 @@ package cache
 import (
 	"context"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,8 +37,6 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-var additionalAnnotations = append(compression.EStargzAnnotations, containerdUncompressed)
-
 // Ref is a reference to cacheable objects.
 type Ref interface {
 	Mountable
@@ -57,7 +56,6 @@ type ImmutableRef interface {
 	Extract(ctx context.Context, s session.Group) error // +progress
 	GetRemotes(ctx context.Context, createIfNeeded bool, cfg config.RefConfig, all bool, s session.Group) ([]*solver.Remote, error)
 	LayerChain() RefList
-	FileList(ctx context.Context, s session.Group) ([]string, error)
 }
 
 type MutableRef interface {
@@ -770,9 +768,12 @@ func (sr *immutableRef) getBlobWithCompression(ctx context.Context, compressionT
 }
 
 func getBlobWithCompression(ctx context.Context, cs content.Store, desc ocispecs.Descriptor, compressionType compression.Type) (ocispecs.Descriptor, error) {
+	if compressionType == compression.UnknownCompression {
+		return ocispecs.Descriptor{}, fmt.Errorf("cannot get unknown compression type")
+	}
 	var target *ocispecs.Descriptor
 	if err := walkBlob(ctx, cs, desc, func(desc ocispecs.Descriptor) bool {
-		if needs, err := compressionType.NeedsConversion(ctx, cs, desc); err == nil && !needs {
+		if needs, err := needsConversion(ctx, cs, desc, compressionType); err == nil && !needs {
 			target = &desc
 			return false
 		}
@@ -837,11 +838,11 @@ func getBlobDesc(ctx context.Context, cs content.Store, dgst digest.Digest) (oci
 		return ocispecs.Descriptor{}, err
 	}
 	if info.Labels == nil {
-		return ocispecs.Descriptor{}, errors.Errorf("no blob metadata is stored for %q", info.Digest)
+		return ocispecs.Descriptor{}, fmt.Errorf("no blob metadata is stored for %q", info.Digest)
 	}
 	mt, ok := info.Labels[blobMediaTypeLabel]
 	if !ok {
-		return ocispecs.Descriptor{}, errors.Errorf("no media type is stored for %q", info.Digest)
+		return ocispecs.Descriptor{}, fmt.Errorf("no media type is stored for %q", info.Digest)
 	}
 	desc := ocispecs.Descriptor{
 		Digest:    info.Digest,
@@ -881,7 +882,7 @@ func filterAnnotationsForSave(a map[string]string) (b map[string]string) {
 	if a == nil {
 		return nil
 	}
-	for _, k := range additionalAnnotations {
+	for _, k := range append(eStargzAnnotations, containerdUncompressed) {
 		v, ok := a[k]
 		if !ok {
 			continue
@@ -1551,12 +1552,12 @@ func readonlyOverlay(opt []string) []string {
 func newSharableMountPool(tmpdirRoot string) (sharableMountPool, error) {
 	if tmpdirRoot != "" {
 		if err := os.MkdirAll(tmpdirRoot, 0700); err != nil {
-			return sharableMountPool{}, errors.Wrap(err, "failed to prepare mount pool")
+			return sharableMountPool{}, fmt.Errorf("failed to prepare mount pool: %w", err)
 		}
 		// If tmpdirRoot is specified, remove existing mounts to avoid conflict.
-		files, err := os.ReadDir(tmpdirRoot)
+		files, err := ioutil.ReadDir(tmpdirRoot)
 		if err != nil {
-			return sharableMountPool{}, errors.Wrap(err, "failed to read mount pool")
+			return sharableMountPool{}, fmt.Errorf("failed to read mount pool: %w", err)
 		}
 		for _, file := range files {
 			if file.IsDir() {
@@ -1590,10 +1591,9 @@ func (p sharableMountPool) setSharable(mounts snapshot.Mountable) snapshot.Mount
 // This is useful to share writable overlayfs mounts.
 //
 // NOTE: Mount() method doesn't return the underlying mount configuration (e.g. overlayfs mounts)
-//
-//	instead it always return bind mounts of the temporary mount point. So if the caller
-//	needs to inspect the underlying mount configuration (e.g. for optimized differ for
-//	overlayfs), this wrapper shouldn't be used.
+//       instead it always return bind mounts of the temporary mount point. So if the caller
+//       needs to inspect the underlying mount configuration (e.g. for optimized differ for
+//       overlayfs), this wrapper shouldn't be used.
 type sharableMountable struct {
 	snapshot.Mountable
 
@@ -1631,7 +1631,7 @@ func (sm *sharableMountable) Mount() (_ []mount.Mount, _ func() error, retErr er
 			// Don't need temporary mount wrapper for non-overlayfs mounts
 			return mounts, release, nil
 		}
-		dir, err := os.MkdirTemp(sm.mountPoolRoot, "buildkit")
+		dir, err := ioutil.TempDir(sm.mountPoolRoot, "buildkit")
 		if err != nil {
 			return nil, nil, err
 		}

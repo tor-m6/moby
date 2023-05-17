@@ -15,8 +15,6 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/backend"
 	"github.com/docker/docker/builder"
-	mobyexporter "github.com/docker/docker/builder/builder-next/exporter"
-	"github.com/docker/docker/builder/builder-next/exporter/overrides"
 	"github.com/docker/docker/daemon/config"
 	"github.com/docker/docker/daemon/images"
 	"github.com/docker/docker/libnetwork"
@@ -79,10 +77,6 @@ type Opt struct {
 	IdentityMapping     idtools.IdentityMapping
 	DNSConfig           config.DNSConfig
 	ApparmorProfile     string
-	UseSnapshotter      bool
-	Snapshotter         string
-	ContainerdAddress   string
-	ContainerdNamespace string
 }
 
 // Builder can build using BuildKit backend
@@ -91,16 +85,15 @@ type Builder struct {
 	dnsconfig      config.DNSConfig
 	reqBodyHandler *reqBodyHandler
 
-	mu             sync.Mutex
-	jobs           map[string]*buildJob
-	useSnapshotter bool
+	mu   sync.Mutex
+	jobs map[string]*buildJob
 }
 
 // New creates a new builder
-func New(ctx context.Context, opt Opt) (*Builder, error) {
+func New(opt Opt) (*Builder, error) {
 	reqHandler := newReqBodyHandler(tracing.DefaultTransport)
 
-	c, err := newController(ctx, reqHandler, opt)
+	c, err := newController(reqHandler, opt)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +102,6 @@ func New(ctx context.Context, opt Opt) (*Builder, error) {
 		dnsconfig:      opt.DNSConfig,
 		reqBodyHandler: reqHandler,
 		jobs:           map[string]*buildJob{},
-		useSnapshotter: opt.UseSnapshotter,
 	}
 	return b, nil
 }
@@ -210,11 +202,8 @@ func (b *Builder) Prune(ctx context.Context, opts types.BuildCachePruneOptions) 
 
 // Build executes a build request
 func (b *Builder) Build(ctx context.Context, opt backend.BuildConfig) (*builder.Result, error) {
-	if len(opt.Options.Outputs) > 1 {
-		return nil, errors.Errorf("multiple outputs not supported")
-	}
-
 	var rc = opt.Source
+
 	if buildID := opt.Options.BuildID; buildID != "" {
 		b.mu.Lock()
 
@@ -344,12 +333,11 @@ func (b *Builder) Build(ctx context.Context, opt backend.BuildConfig) (*builder.
 
 	exporterName := ""
 	exporterAttrs := map[string]string{}
-	if len(opt.Options.Outputs) == 0 {
-		if b.useSnapshotter {
-			exporterName = client.ExporterImage
-		} else {
-			exporterName = mobyexporter.Moby
-		}
+
+	if len(opt.Options.Outputs) > 1 {
+		return nil, errors.Errorf("multiple outputs not supported")
+	} else if len(opt.Options.Outputs) == 0 {
+		exporterName = "moby"
 	} else {
 		// cacheonly is a special type for triggering skipping all exporters
 		if opt.Options.Outputs[0].Type != "cacheonly" {
@@ -358,18 +346,14 @@ func (b *Builder) Build(ctx context.Context, opt backend.BuildConfig) (*builder.
 		}
 	}
 
-	if (exporterName == client.ExporterImage || exporterName == mobyexporter.Moby) && len(opt.Options.Tags) > 0 {
-		nameAttr, err := overrides.SanitizeRepoAndTags(opt.Options.Tags)
-		if err != nil {
-			return nil, err
+	if exporterName == "moby" {
+		if len(opt.Options.Tags) > 0 {
+			exporterAttrs["name"] = strings.Join(opt.Options.Tags, ",")
 		}
-		if exporterAttrs == nil {
-			exporterAttrs = make(map[string]string)
-		}
-		exporterAttrs["name"] = strings.Join(nameAttr, ",")
 	}
 
 	cache := controlapi.CacheOptions{}
+
 	if inlineCache := opt.Options.BuildArgs["BUILDKIT_INLINE_CACHE"]; inlineCache != nil {
 		if b, err := strconv.ParseBool(*inlineCache); err == nil && b {
 			cache.Exports = append(cache.Exports, &controlapi.CacheOptionsEntry{
@@ -401,7 +385,7 @@ func (b *Builder) Build(ctx context.Context, opt backend.BuildConfig) (*builder.
 		if err != nil {
 			return err
 		}
-		if exporterName != mobyexporter.Moby && exporterName != client.ExporterImage {
+		if exporterName != "moby" {
 			return nil
 		}
 		id, ok := resp.ExporterResponse["containerimage.digest"]

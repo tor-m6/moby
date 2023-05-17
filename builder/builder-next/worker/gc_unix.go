@@ -4,12 +4,13 @@
 package worker
 
 import (
-	"syscall"
+	"golang.org/x/sys/unix"
+	// "syscall"
 )
 
 func detectDefaultGCCap(root string) int64 {
-	var st syscall.Statfs_t
-	if err := syscall.Statfs(root, &st); err != nil {
+	var st unix.Statfs_t
+	if err := unix.Statfs(root, &st); err != nil {
 		return defaultCap
 	}
 	diskSize := int64(st.Bsize) * int64(st.Blocks) //nolint unconvert

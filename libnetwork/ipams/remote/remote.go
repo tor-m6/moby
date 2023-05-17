@@ -4,14 +4,12 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/docker/docker/libnetwork/discoverapi"
-	"github.com/docker/docker/libnetwork/ipamapi"
-	"github.com/docker/docker/libnetwork/ipams/remote/api"
-	"github.com/docker/docker/libnetwork/types"
-	"github.com/docker/docker/pkg/plugingetter"
+	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/pkg/plugins"
-	"github.com/pkg/errors"
-	"github.com/sirupsen/logrus"
+	"github.com/docker/libnetwork/discoverapi"
+	"github.com/docker/libnetwork/ipamapi"
+	"github.com/docker/libnetwork/ipams/remote/api"
+	"github.com/docker/libnetwork/types"
 )
 
 type allocator struct {
@@ -30,15 +28,9 @@ func newAllocator(name string, client *plugins.Client) ipamapi.Ipam {
 	return a
 }
 
-// Init registers a remote ipam when its plugin is activated.
-//
-// Deprecated: use [Register].
+// Init registers a remote ipam when its plugin is activated
 func Init(cb ipamapi.Callback, l, g interface{}) error {
-	return Register(cb, cb.GetPluginGetter())
-}
 
-// Register registers a remote ipam when its plugin is activated.
-func Register(cb ipamapi.Registerer, pg plugingetter.PluginGetter) error {
 	newPluginHandler := func(name string, client *plugins.Client) {
 		a := newAllocator(name, client)
 		if cps, err := a.(*allocator).getCapabilities(); err == nil {
@@ -56,41 +48,15 @@ func Register(cb ipamapi.Registerer, pg plugingetter.PluginGetter) error {
 
 	// Unit test code is unaware of a true PluginStore. So we fall back to v1 plugins.
 	handleFunc := plugins.Handle
-	if pg != nil {
+	if pg := cb.GetPluginGetter(); pg != nil {
 		handleFunc = pg.Handle
 		activePlugins := pg.GetAllManagedPluginsByCap(ipamapi.PluginEndpointType)
 		for _, ap := range activePlugins {
-			client, err := getPluginClient(ap)
-			if err != nil {
-				return err
-			}
-			newPluginHandler(ap.Name(), client)
+			newPluginHandler(ap.Name(), ap.Client())
 		}
 	}
 	handleFunc(ipamapi.PluginEndpointType, newPluginHandler)
 	return nil
-}
-
-func getPluginClient(p plugingetter.CompatPlugin) (*plugins.Client, error) {
-	if v1, ok := p.(plugingetter.PluginWithV1Client); ok {
-		return v1.Client(), nil
-	}
-
-	pa, ok := p.(plugingetter.PluginAddr)
-	if !ok {
-		return nil, errors.Errorf("unknown plugin type %T", p)
-	}
-
-	if pa.Protocol() != plugins.ProtocolSchemeHTTPV1 {
-		return nil, errors.Errorf("unsupported plugin protocol %s", pa.Protocol())
-	}
-
-	addr := pa.Addr()
-	client, err := plugins.NewClientWithTimeout(addr.Network()+"://"+addr.String(), nil, pa.Timeout())
-	if err != nil {
-		return nil, errors.Wrap(err, "error creating plugin client")
-	}
-	return client, nil
 }
 
 func (a *allocator) call(methodName string, arg interface{}, retVal PluginResponse) error {

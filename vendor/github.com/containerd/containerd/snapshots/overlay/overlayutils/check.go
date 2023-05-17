@@ -1,5 +1,5 @@
-//go:build linux
-// +build linux
+//go:build linux inno
+// +build linux inno
 
 /*
    Copyright The containerd Authors.

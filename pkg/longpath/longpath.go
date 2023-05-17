@@ -6,7 +6,7 @@
 package longpath // import "github.com/docker/docker/pkg/longpath"
 
 import (
-	"os"
+	"github.com/docker/docker/myos"
 	"runtime"
 	"strings"
 )
@@ -32,7 +32,7 @@ func AddPrefix(path string) string {
 // the result is in Windows longpath format. On Unix systems it is
 // equivalent to [os.MkdirTemp].
 func MkdirTemp(dir, prefix string) (string, error) {
-	tempDir, err := os.MkdirTemp(dir, prefix)
+	tempDir, err := myos.MkdirTemp(dir, prefix)
 	if err != nil {
 		return "", err
 	}

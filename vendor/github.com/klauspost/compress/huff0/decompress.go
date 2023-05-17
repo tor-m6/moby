@@ -61,7 +61,7 @@ func ReadTable(in []byte, s *Scratch) (s2 *Scratch, remain []byte, err error) {
 		b, err := fse.Decompress(in[:iSize], s.fse)
 		s.fse.Out = nil
 		if err != nil {
-			return s, nil, fmt.Errorf("fse decompress returned: %w", err)
+			return s, nil, err
 		}
 		if len(b) > 255 {
 			return s, nil, errors.New("corrupt input: output table too large")
@@ -768,13 +768,14 @@ func (d *Decoder) decompress4X8bit(dst, src []byte) ([]byte, error) {
 				d.bufs.Put(buf)
 				return nil, errors.New("corruption detected: stream overrun 2")
 			}
-			//copy(out, buf[0][:])
-			//copy(out[dstEvery:], buf[1][:])
-			//copy(out[dstEvery*2:], buf[2][:])
-			*(*[bufoff]byte)(out) = buf[0]
-			*(*[bufoff]byte)(out[dstEvery:]) = buf[1]
-			*(*[bufoff]byte)(out[dstEvery*2:]) = buf[2]
-			*(*[bufoff]byte)(out[dstEvery*3:]) = buf[3]
+			copy(out, buf[0][:off])
+			copy(out[dstEvery:], buf[1][:off])
+			copy(out[dstEvery*2:], buf[2][:off])
+			copy(out[dstEvery*3:], buf[3][:off])
+			// *(*[bufoff]byte)(out) = buf[0]
+			// *(*[bufoff]byte)(out[dstEvery:]) = buf[1]
+			// *(*[bufoff]byte)(out[dstEvery*2:]) = buf[2]
+			// *(*[bufoff]byte)(out[dstEvery*3:]) = buf[3]
 			out = out[bufoff:]
 			decoded += bufoff * 4
 		}
@@ -1006,14 +1007,14 @@ func (d *Decoder) decompress4X8bitExactly(dst, src []byte) ([]byte, error) {
 				return nil, errors.New("corruption detected: stream overrun 2")
 			}
 
-			//copy(out, buf[0][:])
-			//copy(out[dstEvery:], buf[1][:])
-			//copy(out[dstEvery*2:], buf[2][:])
-			// copy(out[dstEvery*3:], buf[3][:])
-			*(*[bufoff]byte)(out) = buf[0]
-			*(*[bufoff]byte)(out[dstEvery:]) = buf[1]
-			*(*[bufoff]byte)(out[dstEvery*2:]) = buf[2]
-			*(*[bufoff]byte)(out[dstEvery*3:]) = buf[3]
+			copy(out, buf[0][:off])
+			copy(out[dstEvery:], buf[1][:off])
+			copy(out[dstEvery*2:], buf[2][:off])
+			copy(out[dstEvery*3:], buf[3][:off])
+			// *(*[bufoff]byte)(out) = buf[0]
+			// *(*[bufoff]byte)(out[dstEvery:]) = buf[1]
+			// *(*[bufoff]byte)(out[dstEvery*2:]) = buf[2]
+			// *(*[bufoff]byte)(out[dstEvery*3:]) = buf[3]
 			out = out[bufoff:]
 			decoded += bufoff * 4
 		}

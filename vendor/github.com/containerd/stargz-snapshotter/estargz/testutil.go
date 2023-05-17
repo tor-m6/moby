@@ -31,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -311,11 +312,11 @@ func isSameTarGz(t *testing.T, cla TestingController, a []byte, clb TestingContr
 			return false
 
 		}
-		aFile, err := io.ReadAll(aTar)
+		aFile, err := ioutil.ReadAll(aTar)
 		if err != nil {
 			t.Fatal("failed to read tar payload of A")
 		}
-		bFile, err := io.ReadAll(bTar)
+		bFile, err := ioutil.ReadAll(bTar)
 		if err != nil {
 			t.Fatal("failed to read tar payload of B")
 		}
@@ -1765,7 +1766,7 @@ func hasFileContentsWithPreRead(file string, offset int, want string, extra ...c
 			if !ok {
 				t.Fatalf("fail on %q: unexpected entry %q: %+v, %+v", file, e.Name, e, extraNames)
 			}
-			got, err := io.ReadAll(cr)
+			got, err := ioutil.ReadAll(cr)
 			if err != nil {
 				t.Fatalf("fail on %q: failed to read %q: %v", file, e.Name, err)
 			}
@@ -2338,7 +2339,7 @@ func CheckGzipHasStreams(t *testing.T, b []byte, streams []int64) {
 			t.Fatalf("countStreams(gzip), Reset: %v", err)
 		}
 		zr.Multistream(false)
-		n, err := io.Copy(io.Discard, zr)
+		n, err := io.Copy(ioutil.Discard, zr)
 		if err != nil {
 			t.Fatalf("countStreams(gzip), Copy: %v", err)
 		}

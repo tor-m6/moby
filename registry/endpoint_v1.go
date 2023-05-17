@@ -3,7 +3,7 @@ package registry // import "github.com/docker/docker/registry"
 import (
 	"crypto/tls"
 	"encoding/json"
-	"io"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"strings"
@@ -152,7 +152,7 @@ func (e *v1Endpoint) ping() (v1PingResult, error) {
 
 	defer resp.Body.Close()
 
-	jsonString, err := io.ReadAll(resp.Body)
+	jsonString, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return v1PingResult{}, invalidParamWrapf(err, "error while reading response from %s", pingURL)
 	}

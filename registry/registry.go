@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"io/ioutil"
 	"path/filepath"
 	"strings"
 	"time"
@@ -38,7 +39,7 @@ func newTLSConfig(hostname string, isSecure bool) (*tls.Config, error) {
 	return tlsConfig, nil
 }
 
-func hasFile(files []os.DirEntry, name string) bool {
+func hasFile(files []os.FileInfo, name string) bool {
 	for _, f := range files {
 		if f.Name() == name {
 			return true
@@ -51,7 +52,7 @@ func hasFile(files []os.DirEntry, name string) bool {
 // including roots and certificate pairs and updates the
 // provided TLS configuration.
 func ReadCertsDirectory(tlsConfig *tls.Config, directory string) error {
-	fs, err := os.ReadDir(directory)
+	fs, err := ioutil.ReadDir(directory)
 	if err != nil && !os.IsNotExist(err) {
 		return invalidParam(err)
 	}
@@ -66,7 +67,7 @@ func ReadCertsDirectory(tlsConfig *tls.Config, directory string) error {
 				tlsConfig.RootCAs = systemPool
 			}
 			logrus.Debugf("crt: %s", filepath.Join(directory, f.Name()))
-			data, err := os.ReadFile(filepath.Join(directory, f.Name()))
+			data, err := ioutil.ReadFile(filepath.Join(directory, f.Name()))
 			if err != nil {
 				return err
 			}

@@ -5,6 +5,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"github.com/docker/docker/mystrings"
 	"time"
 )
 
@@ -113,7 +114,7 @@ func ParseTimestamps(value string, defaultSeconds int64) (seconds int64, nanosec
 }
 
 func parseTimestamp(value string) (sec int64, nsec int64, err error) {
-	s, n, ok := strings.Cut(value, ".")
+	s, n, ok := mystrings.Cut(value, ".")
 	sec, err = strconv.ParseInt(s, 10, 64)
 	if err != nil {
 		return sec, 0, err

@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"io"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -140,7 +141,7 @@ func (fm *fileMetadataTransaction) String() string {
 }
 
 func (fms *fileMetadataStore) GetSize(layer ChainID) (int64, error) {
-	content, err := os.ReadFile(fms.getLayerFilename(layer, "size"))
+	content, err := ioutil.ReadFile(fms.getLayerFilename(layer, "size"))
 	if err != nil {
 		return 0, err
 	}
@@ -154,7 +155,7 @@ func (fms *fileMetadataStore) GetSize(layer ChainID) (int64, error) {
 }
 
 func (fms *fileMetadataStore) GetParent(layer ChainID) (ChainID, error) {
-	content, err := os.ReadFile(fms.getLayerFilename(layer, "parent"))
+	content, err := ioutil.ReadFile(fms.getLayerFilename(layer, "parent"))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", nil
@@ -171,7 +172,7 @@ func (fms *fileMetadataStore) GetParent(layer ChainID) (ChainID, error) {
 }
 
 func (fms *fileMetadataStore) GetDiffID(layer ChainID) (DiffID, error) {
-	content, err := os.ReadFile(fms.getLayerFilename(layer, "diff"))
+	content, err := ioutil.ReadFile(fms.getLayerFilename(layer, "diff"))
 	if err != nil {
 		return "", err
 	}
@@ -185,7 +186,7 @@ func (fms *fileMetadataStore) GetDiffID(layer ChainID) (DiffID, error) {
 }
 
 func (fms *fileMetadataStore) GetCacheID(layer ChainID) (string, error) {
-	contentBytes, err := os.ReadFile(fms.getLayerFilename(layer, "cache-id"))
+	contentBytes, err := ioutil.ReadFile(fms.getLayerFilename(layer, "cache-id"))
 	if err != nil {
 		return "", err
 	}
@@ -199,7 +200,7 @@ func (fms *fileMetadataStore) GetCacheID(layer ChainID) (string, error) {
 }
 
 func (fms *fileMetadataStore) GetDescriptor(layer ChainID) (distribution.Descriptor, error) {
-	content, err := os.ReadFile(fms.getLayerFilename(layer, "descriptor.json"))
+	content, err := ioutil.ReadFile(fms.getLayerFilename(layer, "descriptor.json"))
 	if err != nil {
 		if os.IsNotExist(err) {
 			// only return empty descriptor to represent what is stored
@@ -237,25 +238,25 @@ func (fms *fileMetadataStore) SetMountID(mount string, mountID string) error {
 	if err := os.MkdirAll(fms.getMountDirectory(mount), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(fms.getMountFilename(mount, "mount-id"), []byte(mountID), 0o644)
+	return ioutil.WriteFile(fms.getMountFilename(mount, "mount-id"), []byte(mountID), 0o644)
 }
 
 func (fms *fileMetadataStore) SetInitID(mount string, init string) error {
 	if err := os.MkdirAll(fms.getMountDirectory(mount), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(fms.getMountFilename(mount, "init-id"), []byte(init), 0o644)
+	return ioutil.WriteFile(fms.getMountFilename(mount, "init-id"), []byte(init), 0o644)
 }
 
 func (fms *fileMetadataStore) SetMountParent(mount string, parent ChainID) error {
 	if err := os.MkdirAll(fms.getMountDirectory(mount), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(fms.getMountFilename(mount, "parent"), []byte(digest.Digest(parent).String()), 0o644)
+	return ioutil.WriteFile(fms.getMountFilename(mount, "parent"), []byte(digest.Digest(parent).String()), 0o644)
 }
 
 func (fms *fileMetadataStore) GetMountID(mount string) (string, error) {
-	contentBytes, err := os.ReadFile(fms.getMountFilename(mount, "mount-id"))
+	contentBytes, err := ioutil.ReadFile(fms.getMountFilename(mount, "mount-id"))
 	if err != nil {
 		return "", err
 	}
@@ -269,7 +270,7 @@ func (fms *fileMetadataStore) GetMountID(mount string) (string, error) {
 }
 
 func (fms *fileMetadataStore) GetInitID(mount string) (string, error) {
-	contentBytes, err := os.ReadFile(fms.getMountFilename(mount, "init-id"))
+	contentBytes, err := ioutil.ReadFile(fms.getMountFilename(mount, "init-id"))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", nil
@@ -286,7 +287,7 @@ func (fms *fileMetadataStore) GetInitID(mount string) (string, error) {
 }
 
 func (fms *fileMetadataStore) GetMountParent(mount string) (ChainID, error) {
-	content, err := os.ReadFile(fms.getMountFilename(mount, "parent"))
+	content, err := ioutil.ReadFile(fms.getMountFilename(mount, "parent"))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", nil
@@ -305,7 +306,7 @@ func (fms *fileMetadataStore) GetMountParent(mount string) (ChainID, error) {
 func (fms *fileMetadataStore) getOrphan() ([]roLayer, error) {
 	var orphanLayers []roLayer
 	for _, algorithm := range supportedAlgorithms {
-		fileInfos, err := os.ReadDir(filepath.Join(fms.root, string(algorithm)))
+		fileInfos, err := ioutil.ReadDir(filepath.Join(fms.root, string(algorithm)))
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
@@ -327,7 +328,7 @@ func (fms *fileMetadataStore) getOrphan() ([]roLayer, error) {
 			}
 
 			chainFile := filepath.Join(fms.root, string(algorithm), fi.Name(), "cache-id")
-			contentBytes, err := os.ReadFile(chainFile)
+			contentBytes, err := ioutil.ReadFile(chainFile)
 			if err != nil {
 				if !os.IsNotExist(err) {
 					logrus.WithError(err).WithField("digest", dgst).Error("failed to read cache ID")
@@ -354,7 +355,7 @@ func (fms *fileMetadataStore) getOrphan() ([]roLayer, error) {
 func (fms *fileMetadataStore) List() ([]ChainID, []string, error) {
 	var ids []ChainID
 	for _, algorithm := range supportedAlgorithms {
-		fileInfos, err := os.ReadDir(filepath.Join(fms.root, string(algorithm)))
+		fileInfos, err := ioutil.ReadDir(filepath.Join(fms.root, string(algorithm)))
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
@@ -374,7 +375,7 @@ func (fms *fileMetadataStore) List() ([]ChainID, []string, error) {
 		}
 	}
 
-	fileInfos, err := os.ReadDir(filepath.Join(fms.root, "mounts"))
+	fileInfos, err := ioutil.ReadDir(filepath.Join(fms.root, "mounts"))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return ids, []string{}, nil
@@ -395,7 +396,7 @@ func (fms *fileMetadataStore) List() ([]ChainID, []string, error) {
 // Remove layerdb folder if that is marked for removal
 func (fms *fileMetadataStore) Remove(layer ChainID, cache string) error {
 	dgst := digest.Digest(layer)
-	files, err := os.ReadDir(filepath.Join(fms.root, string(dgst.Algorithm())))
+	files, err := ioutil.ReadDir(filepath.Join(fms.root, string(dgst.Algorithm())))
 	if err != nil {
 		return err
 	}
@@ -408,7 +409,7 @@ func (fms *fileMetadataStore) Remove(layer ChainID, cache string) error {
 		// requested cacheID
 		dir := filepath.Join(fms.root, string(dgst.Algorithm()), f.Name())
 		chainFile := filepath.Join(dir, "cache-id")
-		contentBytes, err := os.ReadFile(chainFile)
+		contentBytes, err := ioutil.ReadFile(chainFile)
 		if err != nil {
 			logrus.WithError(err).WithField("file", chainFile).Error("cannot get cache ID")
 			continue

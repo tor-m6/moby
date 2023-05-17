@@ -10,10 +10,8 @@ const (
 )
 
 var (
-	Root                 = filepath.Join(os.Getenv("ProgramData"), "buildkitd", ".buildstate")
-	ConfigDir            = filepath.Join(os.Getenv("ProgramData"), "buildkitd")
-	DefaultCNIBinDir     = filepath.Join(ConfigDir, "bin")
-	DefaultCNIConfigPath = filepath.Join(ConfigDir, "cni.json")
+	Root      = filepath.Join(os.Getenv("ProgramData"), "buildkitd", ".buildstate")
+	ConfigDir = filepath.Join(os.Getenv("ProgramData"), "buildkitd")
 )
 
 func UserAddress() string {

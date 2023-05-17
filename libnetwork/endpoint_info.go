@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/docker/docker/libnetwork/driverapi"
-	"github.com/docker/docker/libnetwork/types"
+	"github.com/docker/libnetwork/driverapi"
+	"github.com/docker/libnetwork/types"
 )
 
 // EndpointInfo provides an interface to retrieve network resources bound to the endpoint.
@@ -30,10 +30,7 @@ type EndpointInfo interface {
 	StaticRoutes() []*types.StaticRoute
 
 	// Sandbox returns the attached sandbox if there, nil otherwise.
-	Sandbox() *Sandbox
-
-	// LoadBalancer returns whether the endpoint is the load balancer endpoint for the network.
-	LoadBalancer() bool
+	Sandbox() Sandbox
 }
 
 // InterfaceInfo provides an interface to retrieve interface addresses bound to the endpoint.
@@ -49,9 +46,6 @@ type InterfaceInfo interface {
 
 	// LinkLocalAddresses returns the list of link-local (IPv4/IPv6) addresses assigned to the endpoint.
 	LinkLocalAddresses() []*net.IPNet
-
-	// SrcName returns the name of the interface w/in the container
-	SrcName() string
 }
 
 type endpointInterface struct {
@@ -135,10 +129,7 @@ func (epi *endpointInterface) UnmarshalJSON(b []byte) error {
 
 	rb, _ := json.Marshal(epMap["routes"])
 	var routes []string
-
-	// TODO(cpuguy83): linter noticed we don't check the error here... no idea why but it seems like it could introduce problems if we start checking
-	json.Unmarshal(rb, &routes) //nolint:errcheck
-
+	json.Unmarshal(rb, &routes)
 	epi.routes = make([]*net.IPNet, 0)
 	for _, route := range routes {
 		ip, ipr, err := net.ParseCIDR(route)
@@ -187,8 +178,7 @@ type tableEntry struct {
 	value     []byte
 }
 
-// Info returns certain operational data belonging to this endpoint.
-func (ep *Endpoint) Info() EndpointInfo {
+func (ep *endpoint) Info() EndpointInfo {
 	if ep.sandboxID != "" {
 		return ep
 	}
@@ -212,9 +202,9 @@ func (ep *Endpoint) Info() EndpointInfo {
 	return sb.getEndpoint(ep.ID())
 }
 
-func (ep *Endpoint) Iface() InterfaceInfo {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
+func (ep *endpoint) Iface() InterfaceInfo {
+	ep.Lock()
+	defer ep.Unlock()
 
 	if ep.iface != nil {
 		return ep.iface
@@ -223,9 +213,9 @@ func (ep *Endpoint) Iface() InterfaceInfo {
 	return nil
 }
 
-func (ep *Endpoint) Interface() driverapi.InterfaceInfo {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
+func (ep *endpoint) Interface() driverapi.InterfaceInfo {
+	ep.Lock()
+	defer ep.Unlock()
 
 	if ep.iface != nil {
 		return ep.iface
@@ -279,19 +269,15 @@ func (epi *endpointInterface) LinkLocalAddresses() []*net.IPNet {
 	return epi.llAddrs
 }
 
-func (epi *endpointInterface) SrcName() string {
-	return epi.srcName
-}
-
 func (epi *endpointInterface) SetNames(srcName string, dstPrefix string) error {
 	epi.srcName = srcName
 	epi.dstPrefix = dstPrefix
 	return nil
 }
 
-func (ep *Endpoint) InterfaceName() driverapi.InterfaceNameInfo {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
+func (ep *endpoint) InterfaceName() driverapi.InterfaceNameInfo {
+	ep.Lock()
+	defer ep.Unlock()
 
 	if ep.iface != nil {
 		return ep.iface
@@ -300,9 +286,9 @@ func (ep *Endpoint) InterfaceName() driverapi.InterfaceNameInfo {
 	return nil
 }
 
-func (ep *Endpoint) AddStaticRoute(destination *net.IPNet, routeType int, nextHop net.IP) error {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
+func (ep *endpoint) AddStaticRoute(destination *net.IPNet, routeType int, nextHop net.IP) error {
+	ep.Lock()
+	defer ep.Unlock()
 
 	r := types.StaticRoute{Destination: destination, RouteType: routeType, NextHop: nextHop}
 
@@ -316,9 +302,9 @@ func (ep *Endpoint) AddStaticRoute(destination *net.IPNet, routeType int, nextHo
 	return nil
 }
 
-func (ep *Endpoint) AddTableEntry(tableName, key string, value []byte) error {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
+func (ep *endpoint) AddTableEntry(tableName, key string, value []byte) error {
+	ep.Lock()
+	defer ep.Unlock()
 
 	ep.joinInfo.driverTableEntries = append(ep.joinInfo.driverTableEntries, &tableEntry{
 		tableName: tableName,
@@ -329,7 +315,7 @@ func (ep *Endpoint) AddTableEntry(tableName, key string, value []byte) error {
 	return nil
 }
 
-func (ep *Endpoint) Sandbox() *Sandbox {
+func (ep *endpoint) Sandbox() Sandbox {
 	cnt, ok := ep.getSandbox()
 	if !ok {
 		return nil
@@ -337,15 +323,9 @@ func (ep *Endpoint) Sandbox() *Sandbox {
 	return cnt
 }
 
-func (ep *Endpoint) LoadBalancer() bool {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
-	return ep.loadBalancer
-}
-
-func (ep *Endpoint) StaticRoutes() []*types.StaticRoute {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
+func (ep *endpoint) StaticRoutes() []*types.StaticRoute {
+	ep.Lock()
+	defer ep.Unlock()
 
 	if ep.joinInfo == nil {
 		return nil
@@ -354,9 +334,9 @@ func (ep *Endpoint) StaticRoutes() []*types.StaticRoute {
 	return ep.joinInfo.StaticRoutes
 }
 
-func (ep *Endpoint) Gateway() net.IP {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
+func (ep *endpoint) Gateway() net.IP {
+	ep.Lock()
+	defer ep.Unlock()
 
 	if ep.joinInfo == nil {
 		return net.IP{}
@@ -365,9 +345,9 @@ func (ep *Endpoint) Gateway() net.IP {
 	return types.GetIPCopy(ep.joinInfo.gw)
 }
 
-func (ep *Endpoint) GatewayIPv6() net.IP {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
+func (ep *endpoint) GatewayIPv6() net.IP {
+	ep.Lock()
+	defer ep.Unlock()
 
 	if ep.joinInfo == nil {
 		return net.IP{}
@@ -376,23 +356,23 @@ func (ep *Endpoint) GatewayIPv6() net.IP {
 	return types.GetIPCopy(ep.joinInfo.gw6)
 }
 
-func (ep *Endpoint) SetGateway(gw net.IP) error {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
+func (ep *endpoint) SetGateway(gw net.IP) error {
+	ep.Lock()
+	defer ep.Unlock()
 
 	ep.joinInfo.gw = types.GetIPCopy(gw)
 	return nil
 }
 
-func (ep *Endpoint) SetGatewayIPv6(gw6 net.IP) error {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
+func (ep *endpoint) SetGatewayIPv6(gw6 net.IP) error {
+	ep.Lock()
+	defer ep.Unlock()
 
 	ep.joinInfo.gw6 = types.GetIPCopy(gw6)
 	return nil
 }
 
-func (ep *Endpoint) retrieveFromStore() (*Endpoint, error) {
+func (ep *endpoint) retrieveFromStore() (*endpoint, error) {
 	n, err := ep.getNetworkFromStore()
 	if err != nil {
 		return nil, fmt.Errorf("could not find network in store to get latest endpoint %s: %v", ep.Name(), err)
@@ -400,9 +380,9 @@ func (ep *Endpoint) retrieveFromStore() (*Endpoint, error) {
 	return n.getEndpointFromStore(ep.ID())
 }
 
-func (ep *Endpoint) DisableGatewayService() {
-	ep.mu.Lock()
-	defer ep.mu.Unlock()
+func (ep *endpoint) DisableGatewayService() {
+	ep.Lock()
+	defer ep.Unlock()
 
 	ep.joinInfo.disableGatewayService = true
 }
@@ -440,16 +420,10 @@ func (epj *endpointJoinInfo) UnmarshalJSON(b []byte) error {
 	if v, ok := epMap["StaticRoutes"]; ok {
 		tb, _ := json.Marshal(v)
 		var tStaticRoute []types.StaticRoute
-		// TODO(cpuguy83): Linter caught that we aren't checking errors here
-		// I don't know why we aren't other than potentially the data is not always expected to be right?
-		// This is why I'm not adding the error check.
-		//
-		// In any case for posterity please if you figure this out document it or check the error
-		json.Unmarshal(tb, &tStaticRoute) //nolint:errcheck
+		json.Unmarshal(tb, &tStaticRoute)
 	}
 	var StaticRoutes []*types.StaticRoute
 	for _, r := range tStaticRoute {
-		r := r
 		StaticRoutes = append(StaticRoutes, &r)
 	}
 	epj.StaticRoutes = StaticRoutes

@@ -1,6 +1,3 @@
-//go:build linux
-// +build linux
-
 package bridge
 
 import (
@@ -8,11 +5,11 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/docker/docker/libnetwork/datastore"
-	"github.com/docker/docker/libnetwork/discoverapi"
-	"github.com/docker/docker/libnetwork/netlabel"
-	"github.com/docker/docker/libnetwork/types"
-	"github.com/sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
+	"github.com/docker/libnetwork/datastore"
+	"github.com/docker/libnetwork/discoverapi"
+	"github.com/docker/libnetwork/netlabel"
+	"github.com/docker/libnetwork/types"
 )
 
 const (
@@ -65,7 +62,7 @@ func (d *driver) populateNetworks() error {
 		if err = d.createNetwork(ncfg); err != nil {
 			logrus.Warnf("could not create bridge network for id %s bridge name %s while booting up from persistent state: %v", ncfg.ID, ncfg.BridgeName, err)
 		}
-		logrus.Debugf("Network (%.7s) restored", ncfg.ID)
+		logrus.Debugf("Network (%s) restored", ncfg.ID[0:7])
 	}
 
 	return nil
@@ -85,16 +82,16 @@ func (d *driver) populateEndpoints() error {
 		ep := kvo.(*bridgeEndpoint)
 		n, ok := d.networks[ep.nid]
 		if !ok {
-			logrus.Debugf("Network (%.7s) not found for restored bridge endpoint (%.7s)", ep.nid, ep.id)
-			logrus.Debugf("Deleting stale bridge endpoint (%.7s) from store", ep.id)
+			logrus.Debugf("Network (%s) not found for restored bridge endpoint (%s)", ep.nid[0:7], ep.id[0:7])
+			logrus.Debugf("Deleting stale bridge endpoint (%s) from store", ep.id[0:7])
 			if err := d.storeDelete(ep); err != nil {
-				logrus.Debugf("Failed to delete stale bridge endpoint (%.7s) from store", ep.id)
+				logrus.Debugf("Failed to delete stale bridge endpoint (%s) from store", ep.id[0:7])
 			}
 			continue
 		}
 		n.endpoints[ep.id] = ep
 		n.restorePortAllocations(ep)
-		logrus.Debugf("Endpoint (%.7s) restored to network (%.7s)", ep.id, ep.nid)
+		logrus.Debugf("Endpoint (%s) restored to network (%s)", ep.id[0:7], ep.nid[0:7])
 	}
 
 	return nil
@@ -140,12 +137,10 @@ func (ncfg *networkConfiguration) MarshalJSON() ([]byte, error) {
 	nMap["EnableIPv6"] = ncfg.EnableIPv6
 	nMap["EnableIPMasquerade"] = ncfg.EnableIPMasquerade
 	nMap["EnableICC"] = ncfg.EnableICC
-	nMap["InhibitIPv4"] = ncfg.InhibitIPv4
 	nMap["Mtu"] = ncfg.Mtu
 	nMap["Internal"] = ncfg.Internal
 	nMap["DefaultBridge"] = ncfg.DefaultBridge
 	nMap["DefaultBindingIP"] = ncfg.DefaultBindingIP.String()
-	nMap["HostIP"] = ncfg.HostIP.String()
 	nMap["DefaultGatewayIPv4"] = ncfg.DefaultGatewayIPv4.String()
 	nMap["DefaultGatewayIPv6"] = ncfg.DefaultGatewayIPv6.String()
 	nMap["ContainerIfacePrefix"] = ncfg.ContainerIfacePrefix
@@ -188,10 +183,6 @@ func (ncfg *networkConfiguration) UnmarshalJSON(b []byte) error {
 		ncfg.ContainerIfacePrefix = v.(string)
 	}
 
-	if v, ok := nMap["HostIP"]; ok {
-		ncfg.HostIP = net.ParseIP(v.(string))
-	}
-
 	ncfg.DefaultBridge = nMap["DefaultBridge"].(bool)
 	ncfg.DefaultBindingIP = net.ParseIP(nMap["DefaultBindingIP"].(string))
 	ncfg.DefaultGatewayIPv4 = net.ParseIP(nMap["DefaultGatewayIPv4"].(string))
@@ -201,10 +192,6 @@ func (ncfg *networkConfiguration) UnmarshalJSON(b []byte) error {
 	ncfg.EnableIPv6 = nMap["EnableIPv6"].(bool)
 	ncfg.EnableIPMasquerade = nMap["EnableIPMasquerade"].(bool)
 	ncfg.EnableICC = nMap["EnableICC"].(bool)
-	if v, ok := nMap["InhibitIPv4"]; ok {
-		ncfg.InhibitIPv4 = v.(bool)
-	}
-
 	ncfg.Mtu = int(nMap["Mtu"].(float64))
 	if v, ok := nMap["Internal"]; ok {
 		ncfg.Internal = v.(bool)
@@ -395,7 +382,7 @@ func (n *bridgeNetwork) restorePortAllocations(ep *bridgeEndpoint) {
 	ep.extConnConfig.PortBindings = ep.portMapping
 	_, err := n.allocatePorts(ep, n.config.DefaultBindingIP, n.driver.config.EnableUserlandProxy)
 	if err != nil {
-		logrus.Warnf("Failed to reserve existing port mapping for endpoint %.7s:%v", ep.id, err)
+		logrus.Warnf("Failed to reserve existing port mapping for endpoint %s:%v", ep.id[0:7], err)
 	}
 	ep.extConnConfig.PortBindings = tmp
 }

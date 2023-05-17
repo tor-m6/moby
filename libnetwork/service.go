@@ -5,7 +5,7 @@ import (
 	"net"
 	"sync"
 
-	"github.com/docker/docker/libnetwork/internal/setmatrix"
+	"github.com/docker/libnetwork/common"
 )
 
 var (
@@ -54,7 +54,7 @@ type service struct {
 	// associated with it. At stable state the endpoint ID expected is 1
 	// but during transition and service change it is possible to have
 	// temporary more than 1
-	ipToEndpoint *setmatrix.SetMatrix
+	ipToEndpoint common.SetMatrix
 
 	deleted bool
 
@@ -94,5 +94,4 @@ type loadBalancer struct {
 
 	// Back pointer to service to which the loadbalancer belongs.
 	service *service
-	sync.Mutex
 }

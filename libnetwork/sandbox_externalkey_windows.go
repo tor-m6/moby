@@ -1,4 +1,3 @@
-//go:build windows
 // +build windows
 
 package libnetwork
@@ -7,7 +6,7 @@ import (
 	"io"
 	"net"
 
-	"github.com/docker/docker/libnetwork/types"
+	"github.com/docker/libnetwork/types"
 )
 
 // processSetKeyReexec is a private function that must be called only on an reexec path
@@ -31,16 +30,16 @@ func processReturn(r io.Reader) error {
 }
 
 // no-op on non linux systems
-func (c *Controller) startExternalKeyListener() error {
+func (c *controller) startExternalKeyListener() error {
 	return nil
 }
 
-func (c *Controller) acceptClientConnections(sock string, l net.Listener) {
+func (c *controller) acceptClientConnections(sock string, l net.Listener) {
 }
 
-func (c *Controller) processExternalKey(conn net.Conn) error {
+func (c *controller) processExternalKey(conn net.Conn) error {
 	return types.NotImplementedErrorf("processExternalKey isn't supported on non linux systems")
 }
 
-func (c *Controller) stopExternalKeyListener() {
+func (c *controller) stopExternalKeyListener() {
 }

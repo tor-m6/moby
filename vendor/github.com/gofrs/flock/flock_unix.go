@@ -9,6 +9,7 @@ package flock
 import (
 	"os"
 	"syscall"
+	"golang.org/x/sys/unix"
 )
 
 // Lock is a blocking call to try and take an exclusive file lock. It will wait
@@ -54,7 +55,7 @@ func (f *Flock) lock(locked *bool, flag int) error {
 		defer f.ensureFhState()
 	}
 
-	if err := syscall.Flock(int(f.fh.Fd()), flag); err != nil {
+	if err := unix.Flock(int(f.fh.Fd()), flag); err != nil {
 		shouldRetry, reopenErr := f.reopenFDOnError(err)
 		if reopenErr != nil {
 			return reopenErr
@@ -64,7 +65,7 @@ func (f *Flock) lock(locked *bool, flag int) error {
 			return err
 		}
 
-		if err = syscall.Flock(int(f.fh.Fd()), flag); err != nil {
+		if err = unix.Flock(int(f.fh.Fd()), flag); err != nil {
 			return err
 		}
 	}
@@ -94,7 +95,7 @@ func (f *Flock) Unlock() error {
 	}
 
 	// mark the file as unlocked
-	if err := syscall.Flock(int(f.fh.Fd()), syscall.LOCK_UN); err != nil {
+	if err := unix.Flock(int(f.fh.Fd()), syscall.LOCK_UN); err != nil {
 		return err
 	}
 
@@ -148,7 +149,7 @@ func (f *Flock) try(locked *bool, flag int) (bool, error) {
 
 	var retried bool
 retry:
-	err := syscall.Flock(int(f.fh.Fd()), flag|syscall.LOCK_NB)
+	err := unix.Flock(int(f.fh.Fd()), flag|syscall.LOCK_NB)
 
 	switch err {
 	case syscall.EWOULDBLOCK:

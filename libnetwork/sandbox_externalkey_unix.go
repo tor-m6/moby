@@ -1,34 +1,27 @@
-//go:build linux || freebsd
-// +build linux freebsd
+// +build linux freebsd inno
 
 package libnetwork
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"os"
-	"path/filepath"
 
-	"github.com/docker/docker/libnetwork/types"
-	"github.com/docker/docker/pkg/stringid"
-	"github.com/opencontainers/runtime-spec/specs-go"
-	"github.com/sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
+	"github.com/docker/libnetwork/types"
+	"github.com/opencontainers/runc/libcontainer/configs"
 )
 
-const (
-	execSubdir      = "libnetwork"
-	defaultExecRoot = "/run/docker"
-	success         = "success"
-)
+const udsBase = "/run/docker/libnetwork/"
+const success = "success"
 
 // processSetKeyReexec is a private function that must be called only on an reexec path
-// It expects 3 args { [0] = "libnetwork-setkey", [1] = <container-id>, [2] = <short-controller-id> }
-// It also expects specs.State as a json string in <stdin>
+// It expects 3 args { [0] = "libnetwork-setkey", [1] = <container-id>, [2] = <controller-id> }
+// It also expects configs.HookState as a json string in <stdin>
 // Refer to https://github.com/opencontainers/runc/pull/160/ for more information
-// The docker exec-root can be specified as "-exec-root" flag. The default value is "/run/docker".
 func processSetKeyReexec() {
 	var err error
 
@@ -39,39 +32,35 @@ func processSetKeyReexec() {
 		}
 	}()
 
-	execRoot := flag.String("exec-root", defaultExecRoot, "docker exec root")
-	flag.Parse()
-
-	// expecting 3 os.Args {[0]="libnetwork-setkey", [1]=<container-id>, [2]=<short-controller-id> }
-	// (i.e. expecting 2 flag.Args())
-	args := flag.Args()
-	if len(args) < 2 {
-		err = fmt.Errorf("Re-exec expects 2 args (after parsing flags), received : %d", len(args))
+	// expecting 3 args {[0]="libnetwork-setkey", [1]=<container-id>, [2]=<controller-id> }
+	if len(os.Args) < 3 {
+		err = fmt.Errorf("Re-exec expects 3 args, received : %d", len(os.Args))
 		return
 	}
-	containerID, shortCtlrID := args[0], args[1]
+	containerID := os.Args[1]
 
-	// We expect specs.State as a json string in <stdin>
-	stateBuf, err := io.ReadAll(os.Stdin)
+	// We expect configs.HookState as a json string in <stdin>
+	stateBuf, err := ioutil.ReadAll(os.Stdin)
 	if err != nil {
 		return
 	}
-	var state specs.State
+	var state configs.HookState
 	if err = json.Unmarshal(stateBuf, &state); err != nil {
 		return
 	}
 
-	err = SetExternalKey(shortCtlrID, containerID, fmt.Sprintf("/proc/%d/ns/net", state.Pid), *execRoot)
+	controllerID := os.Args[2]
+
+	err = SetExternalKey(controllerID, containerID, fmt.Sprintf("/proc/%d/ns/net", state.Pid))
 }
 
 // SetExternalKey provides a convenient way to set an External key to a sandbox
-func SetExternalKey(shortCtlrID string, containerID string, key string, execRoot string) error {
+func SetExternalKey(controllerID string, containerID string, key string) error {
 	keyData := setKeyData{
 		ContainerID: containerID,
 		Key:         key}
 
-	uds := filepath.Join(execRoot, execSubdir, shortCtlrID+".sock")
-	c, err := net.Dial("unix", uds)
+	c, err := net.Dial("unix", udsBase+controllerID+".sock")
 	if err != nil {
 		return err
 	}
@@ -112,17 +101,11 @@ func processReturn(r io.Reader) error {
 	return nil
 }
 
-func (c *Controller) startExternalKeyListener() error {
-	execRoot := defaultExecRoot
-	if v := c.Config().ExecRoot; v != "" {
-		execRoot = v
-	}
-	udsBase := filepath.Join(execRoot, execSubdir)
+func (c *controller) startExternalKeyListener() error {
 	if err := os.MkdirAll(udsBase, 0600); err != nil {
 		return err
 	}
-	shortCtlrID := stringid.TruncateID(c.id)
-	uds := filepath.Join(udsBase, shortCtlrID+".sock")
+	uds := udsBase + c.id + ".sock"
 	l, err := net.Listen("unix", uds)
 	if err != nil {
 		return err
@@ -131,15 +114,15 @@ func (c *Controller) startExternalKeyListener() error {
 		l.Close()
 		return err
 	}
-	c.mu.Lock()
+	c.Lock()
 	c.extKeyListener = l
-	c.mu.Unlock()
+	c.Unlock()
 
 	go c.acceptClientConnections(uds, l)
 	return nil
 }
 
-func (c *Controller) acceptClientConnections(sock string, l net.Listener) {
+func (c *controller) acceptClientConnections(sock string, l net.Listener) {
 	for {
 		conn, err := l.Accept()
 		if err != nil {
@@ -167,7 +150,7 @@ func (c *Controller) acceptClientConnections(sock string, l net.Listener) {
 	}
 }
 
-func (c *Controller) processExternalKey(conn net.Conn) error {
+func (c *controller) processExternalKey(conn net.Conn) error {
 	buf := make([]byte, 1280)
 	nr, err := conn.Read(buf)
 	if err != nil {
@@ -178,7 +161,7 @@ func (c *Controller) processExternalKey(conn net.Conn) error {
 		return err
 	}
 
-	var sandbox *Sandbox
+	var sandbox Sandbox
 	search := SandboxContainerWalker(&sandbox, s.ContainerID)
 	c.WalkSandboxes(search)
 	if sandbox == nil {
@@ -188,6 +171,6 @@ func (c *Controller) processExternalKey(conn net.Conn) error {
 	return sandbox.SetKey(s.Key)
 }
 
-func (c *Controller) stopExternalKeyListener() {
+func (c *controller) stopExternalKeyListener() {
 	c.extKeyListener.Close()
 }

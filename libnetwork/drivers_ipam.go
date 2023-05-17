@@ -1,30 +1,23 @@
 package libnetwork
 
 import (
-	"github.com/docker/docker/libnetwork/ipamapi"
-	builtinIpam "github.com/docker/docker/libnetwork/ipams/builtin"
-	nullIpam "github.com/docker/docker/libnetwork/ipams/null"
-	remoteIpam "github.com/docker/docker/libnetwork/ipams/remote"
-	"github.com/docker/docker/libnetwork/ipamutils"
-	"github.com/docker/docker/pkg/plugingetter"
+	"github.com/docker/libnetwork/drvregistry"
+	"github.com/docker/libnetwork/ipamapi"
+	builtinIpam "github.com/docker/libnetwork/ipams/builtin"
+	nullIpam "github.com/docker/libnetwork/ipams/null"
+	remoteIpam "github.com/docker/libnetwork/ipams/remote"
 )
 
-func initIPAMDrivers(r ipamapi.Registerer, pg plugingetter.PluginGetter, addressPool []*ipamutils.NetworkToSplit) error {
-	// TODO: pass address pools as arguments to builtinIpam.Init instead of
-	// indirectly through global mutable state. Swarmkit references that
-	// function so changing its signature breaks the build.
-	if err := builtinIpam.SetDefaultIPAddressPool(addressPool); err != nil {
-		return err
-	}
-
-	for _, fn := range [](func(ipamapi.Registerer) error){
-		builtinIpam.Register,
-		nullIpam.Register,
+func initIPAMDrivers(r *drvregistry.DrvRegistry, lDs, gDs interface{}) error {
+	for _, fn := range [](func(ipamapi.Callback, interface{}, interface{}) error){
+		builtinIpam.Init,
+		remoteIpam.Init,
+		nullIpam.Init,
 	} {
-		if err := fn(r); err != nil {
+		if err := fn(r, lDs, gDs); err != nil {
 			return err
 		}
 	}
 
-	return remoteIpam.Register(r, pg)
+	return nil
 }

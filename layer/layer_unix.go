@@ -1,5 +1,5 @@
-//go:build linux || freebsd || darwin || openbsd
-// +build linux freebsd darwin openbsd
+//go:build linux || freebsd || darwin || openbsd || inno
+// +build linux freebsd darwin openbsd inno
 
 package layer // import "github.com/docker/docker/layer"
 

@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	_ "github.com/docker/libnetwork/testutils"
 )
 
 func TestGenerate(t *testing.T) {
@@ -78,24 +80,18 @@ func TestGenerateMissingField(t *testing.T) {
 
 	if _, ok := err.(NoSuchFieldError); !ok {
 		t.Fatalf("expected NoSuchFieldError, got %#v", err)
-	}
-
-	const expected = "no field"
-	if !strings.Contains(err.Error(), expected) {
+	} else if expected := "no field"; !strings.Contains(err.Error(), expected) {
 		t.Fatalf("expected %q in error message, got %s", expected, err.Error())
 	}
 }
 
 func TestFieldCannotBeSet(t *testing.T) {
-	type Model struct{ foo int } //nolint:nolintlint,unused // un-exported field is used to test error-handling
+	type Model struct{ foo int }
 	_, err := GenerateFromModel(Generic{"foo": "bar"}, Model{})
 
 	if _, ok := err.(CannotSetFieldError); !ok {
 		t.Fatalf("expected CannotSetFieldError, got %#v", err)
-	}
-
-	const expected = "cannot set field"
-	if !strings.Contains(err.Error(), expected) {
+	} else if expected := "cannot set field"; !strings.Contains(err.Error(), expected) {
 		t.Fatalf("expected %q in error message, got %s", expected, err.Error())
 	}
 }
@@ -106,10 +102,7 @@ func TestTypeMismatchError(t *testing.T) {
 
 	if _, ok := err.(TypeMismatchError); !ok {
 		t.Fatalf("expected TypeMismatchError, got %#v", err)
-	}
-
-	const expected = "type mismatch"
-	if !strings.Contains(err.Error(), expected) {
+	} else if expected := "type mismatch"; !strings.Contains(err.Error(), expected) {
 		t.Fatalf("expected %q in error message, got %s", expected, err.Error())
 	}
 }

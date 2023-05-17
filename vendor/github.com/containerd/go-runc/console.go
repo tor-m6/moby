@@ -24,9 +24,10 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/containerd/console"
-	"golang.org/x/sys/unix"
+	// "golang.org/x/sys/unix"
 )
 
 // NewConsoleSocket creates a new unix socket at the provided path to accept a
@@ -96,7 +97,7 @@ func (c *Socket) Path() string {
 // locally (it is sent as non-auxiliary data in the same payload).
 func recvFd(socket *net.UnixConn) (*os.File, error) {
 	const MaxNameLen = 4096
-	var oobSpace = unix.CmsgSpace(4)
+	var oobSpace = syscall.CmsgSpace(4)
 
 	name := make([]byte, MaxNameLen)
 	oob := make([]byte, oobSpace)
@@ -114,7 +115,7 @@ func recvFd(socket *net.UnixConn) (*os.File, error) {
 	name = name[:n]
 	oob = oob[:oobn]
 
-	scms, err := unix.ParseSocketControlMessage(oob)
+	scms, err := syscall.ParseSocketControlMessage(oob)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +124,7 @@ func recvFd(socket *net.UnixConn) (*os.File, error) {
 	}
 	scm := scms[0]
 
-	fds, err := unix.ParseUnixRights(&scm)
+	fds, err := syscall.ParseUnixRights(&scm)
 	if err != nil {
 		return nil, err
 	}

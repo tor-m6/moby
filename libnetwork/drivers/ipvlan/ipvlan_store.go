@@ -1,6 +1,3 @@
-//go:build linux
-// +build linux
-
 package ipvlan
 
 import (
@@ -8,11 +5,11 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/docker/docker/libnetwork/datastore"
-	"github.com/docker/docker/libnetwork/discoverapi"
-	"github.com/docker/docker/libnetwork/netlabel"
-	"github.com/docker/docker/libnetwork/types"
-	"github.com/sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
+	"github.com/docker/libnetwork/datastore"
+	"github.com/docker/libnetwork/discoverapi"
+	"github.com/docker/libnetwork/netlabel"
+	"github.com/docker/libnetwork/types"
 )
 
 const (
@@ -30,13 +27,17 @@ type configuration struct {
 	Internal         bool
 	Parent           string
 	IpvlanMode       string
-	IpvlanFlag       string
 	CreatedSlaveLink bool
-	Ipv4Subnets      []*ipSubnet
-	Ipv6Subnets      []*ipSubnet
+	Ipv4Subnets      []*ipv4Subnet
+	Ipv6Subnets      []*ipv6Subnet
 }
 
-type ipSubnet struct {
+type ipv4Subnet struct {
+	SubnetIP string
+	GwIP     string
+}
+
+type ipv6Subnet struct {
 	SubnetIP string
 	GwIP     string
 }
@@ -54,14 +55,7 @@ func (d *driver) initStore(option map[string]interface{}) error {
 			return types.InternalErrorf("ipvlan driver failed to initialize data store: %v", err)
 		}
 
-		err = d.populateNetworks()
-		if err != nil {
-			return err
-		}
-		err = d.populateEndpoints()
-		if err != nil {
-			return err
-		}
+		return d.populateNetworks()
 	}
 
 	return nil
@@ -79,7 +73,7 @@ func (d *driver) populateNetworks() error {
 	}
 	for _, kvo := range kvol {
 		config := kvo.(*configuration)
-		if _, err = d.createNetwork(config); err != nil {
+		if err = d.createNetwork(config); err != nil {
 			logrus.Warnf("could not create ipvlan network for id %s from persistent state", config.ID)
 		}
 	}
@@ -101,15 +95,15 @@ func (d *driver) populateEndpoints() error {
 		ep := kvo.(*endpoint)
 		n, ok := d.networks[ep.nid]
 		if !ok {
-			logrus.Debugf("Network (%.7s) not found for restored ipvlan endpoint (%.7s)", ep.nid, ep.id)
-			logrus.Debugf("Deleting stale ipvlan endpoint (%.7s) from store", ep.id)
+			logrus.Debugf("Network (%s) not found for restored ipvlan endpoint (%s)", ep.nid[0:7], ep.id[0:7])
+			logrus.Debugf("Deleting stale ipvlan endpoint (%s) from store", ep.id[0:7])
 			if err := d.storeDelete(ep); err != nil {
-				logrus.Debugf("Failed to delete stale ipvlan endpoint (%.7s) from store", ep.id)
+				logrus.Debugf("Failed to delete stale ipvlan endpoint (%s) from store", ep.id[0:7])
 			}
 			continue
 		}
 		n.endpoints[ep.id] = ep
-		logrus.Debugf("Endpoint (%.7s) restored to network (%.7s)", ep.id, ep.nid)
+		logrus.Debugf("Endpoint (%s) restored to network (%s)", ep.id[0:7], ep.nid[0:7])
 	}
 
 	return nil
@@ -154,7 +148,6 @@ func (config *configuration) MarshalJSON() ([]byte, error) {
 	nMap["Mtu"] = config.Mtu
 	nMap["Parent"] = config.Parent
 	nMap["IpvlanMode"] = config.IpvlanMode
-	nMap["IpvlanFlag"] = config.IpvlanFlag
 	nMap["Internal"] = config.Internal
 	nMap["CreatedSubIface"] = config.CreatedSlaveLink
 	if len(config.Ipv4Subnets) > 0 {
@@ -188,12 +181,6 @@ func (config *configuration) UnmarshalJSON(b []byte) error {
 	config.Mtu = int(nMap["Mtu"].(float64))
 	config.Parent = nMap["Parent"].(string)
 	config.IpvlanMode = nMap["IpvlanMode"].(string)
-	if v, ok := nMap["IpvlanFlag"]; ok {
-		config.IpvlanFlag = v.(string)
-	} else {
-		// Migrate config from an older daemon which did not have the flag configurable.
-		config.IpvlanFlag = flagBridge
-	}
 	config.Internal = nMap["Internal"].(bool)
 	config.CreatedSlaveLink = nMap["CreatedSubIface"].(bool)
 	if v, ok := nMap["Ipv4Subnets"]; ok {

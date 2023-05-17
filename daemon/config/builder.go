@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
+	"github.com/docker/docker/mystrings"
 
 	"github.com/docker/docker/api/types/filters"
 )
@@ -44,7 +45,7 @@ func (x *BuilderGCFilter) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	for _, s := range arr {
-		name, value, _ := strings.Cut(s, "=")
+		name, value, _ := mystrings.Cut(s, "=")
 		name = strings.ToLower(strings.TrimSpace(name))
 		value = strings.TrimSpace(value)
 		f.Add(name, value)

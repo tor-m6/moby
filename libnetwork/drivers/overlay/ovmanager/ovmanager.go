@@ -7,13 +7,13 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/docker/docker/libnetwork/datastore"
-	"github.com/docker/docker/libnetwork/discoverapi"
-	"github.com/docker/docker/libnetwork/driverapi"
-	"github.com/docker/docker/libnetwork/idm"
-	"github.com/docker/docker/libnetwork/netlabel"
-	"github.com/docker/docker/libnetwork/types"
-	"github.com/sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
+	"github.com/docker/libnetwork/datastore"
+	"github.com/docker/libnetwork/discoverapi"
+	"github.com/docker/libnetwork/driverapi"
+	"github.com/docker/libnetwork/idm"
+	"github.com/docker/libnetwork/netlabel"
+	"github.com/docker/libnetwork/types"
 )
 
 const (
@@ -27,6 +27,7 @@ type networkTable map[string]*network
 type driver struct {
 	config   map[string]interface{}
 	networks networkTable
+	store    datastore.DataStore
 	vxlanIdm *idm.Idm
 	sync.Mutex
 }
@@ -44,15 +45,8 @@ type network struct {
 	sync.Mutex
 }
 
-// Init registers a new instance of the overlay driver.
-//
-// Deprecated: use [Register].
+// Init registers a new instance of overlay driver
 func Init(dc driverapi.DriverCallback, config map[string]interface{}) error {
-	return Register(dc, config)
-}
-
-// Register registers a new instance of the overlay driver.
-func Register(r driverapi.DriverCallback, config map[string]interface{}) error {
 	var err error
 	c := driverapi.Capability{
 		DataScope:         datastore.GlobalScope,
@@ -69,7 +63,7 @@ func Register(r driverapi.DriverCallback, config map[string]interface{}) error {
 		return fmt.Errorf("failed to initialize vxlan id manager: %v", err)
 	}
 
-	return r.RegisterDriver(networkType, d, c)
+	return dc.RegisterDriver(networkType, d, c)
 }
 
 func (d *driver) NetworkAllocate(id string, option map[string]string, ipV4Data, ipV6Data []driverapi.IPAMData) (map[string]string, error) {
@@ -124,19 +118,15 @@ func (d *driver) NetworkAllocate(id string, option map[string]string, ipV4Data, 
 		n.subnets = append(n.subnets, s)
 	}
 
-	val := strconv.FormatUint(uint64(n.subnets[0].vni), 10)
+	val := fmt.Sprintf("%d", n.subnets[0].vni)
 	for _, s := range n.subnets[1:] {
-		val = val + "," + strconv.FormatUint(uint64(s.vni), 10)
+		val = val + fmt.Sprintf(",%d", s.vni)
 	}
 	opts[netlabel.OverlayVxlanIDList] = val
 
 	d.Lock()
-	defer d.Unlock()
-	if _, ok := d.networks[id]; ok {
-		n.releaseVxlanID()
-		return nil, fmt.Errorf("network %s already exists", id)
-	}
 	d.networks[id] = n
+	d.Unlock()
 
 	return opts, nil
 }
@@ -147,8 +137,8 @@ func (d *driver) NetworkFree(id string) error {
 	}
 
 	d.Lock()
-	defer d.Unlock()
 	n, ok := d.networks[id]
+	d.Unlock()
 
 	if !ok {
 		return fmt.Errorf("overlay network with id %s not found", id)
@@ -157,7 +147,9 @@ func (d *driver) NetworkFree(id string) error {
 	// Release all vxlan IDs in one shot.
 	n.releaseVxlanID()
 
+	d.Lock()
 	delete(d.networks, id)
+	d.Unlock()
 
 	return nil
 }

@@ -1,5 +1,5 @@
-//go:build linux || freebsd || openbsd
-// +build linux freebsd openbsd
+//go:build linux || freebsd || openbsd || inno
+// +build linux freebsd openbsd inno
 
 package kernel // import "github.com/docker/docker/pkg/parsers/kernel"
 

@@ -3,13 +3,14 @@ package osl
 import (
 	"fmt"
 	"net"
+	"regexp"
 	"sync"
 	"syscall"
 	"time"
 
-	"github.com/docker/docker/libnetwork/ns"
-	"github.com/docker/docker/libnetwork/types"
-	"github.com/sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
+	"github.com/docker/libnetwork/ns"
+	"github.com/docker/libnetwork/types"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
 )
@@ -25,6 +26,7 @@ type nwIface struct {
 	mac         net.HardwareAddr
 	address     *net.IPNet
 	addressIPv6 *net.IPNet
+	ipAliases   []*net.IPNet
 	llAddrs     []*net.IPNet
 	routes      []*net.IPNet
 	bridge      bool
@@ -93,6 +95,13 @@ func (i *nwIface) LinkLocalAddresses() []*net.IPNet {
 	defer i.Unlock()
 
 	return i.llAddrs
+}
+
+func (i *nwIface) IPAliases() []*net.IPNet {
+	i.Lock()
+	defer i.Unlock()
+
+	return i.ipAliases
 }
 
 func (i *nwIface) Routes() []*net.IPNet {
@@ -192,12 +201,12 @@ func (i *nwIface) Statistics() (*types.InterfaceStatistics, error) {
 	}
 
 	return &types.InterfaceStatistics{
-		RxBytes:   stats.RxBytes,
-		TxBytes:   stats.TxBytes,
-		RxPackets: stats.RxPackets,
-		TxPackets: stats.TxPackets,
-		RxDropped: stats.RxDropped,
-		TxDropped: stats.TxDropped,
+		RxBytes:   uint64(stats.RxBytes),
+		TxBytes:   uint64(stats.TxBytes),
+		RxPackets: uint64(stats.RxPackets),
+		TxPackets: uint64(stats.TxPackets),
+		RxDropped: uint64(stats.RxDropped),
+		TxDropped: uint64(stats.TxDropped),
 	}, nil
 }
 
@@ -288,16 +297,6 @@ func (n *networkNamespace) AddInterface(srcName, dstPrefix string, options ...If
 
 	// Configure the interface now this is moved in the proper namespace.
 	if err := configureInterface(nlh, iface, i); err != nil {
-		// If configuring the device fails move it back to the host namespace
-		// and change the name back to the source name. This allows the caller
-		// to properly cleanup the interface. Its important especially for
-		// interfaces with global attributes, ex: vni id for vxlan interfaces.
-		if nerr := nlh.LinkSetName(iface, i.SrcName()); nerr != nil {
-			logrus.Errorf("renaming interface (%s->%s) failed, %v after config error %v", i.DstName(), i.SrcName(), nerr, err)
-		}
-		if nerr := nlh.LinkSetNsFd(iface, ns.ParseHandlerInt()); nerr != nil {
-			logrus.Errorf("moving interface %s to host ns failed, %v, after config error %v", i.SrcName(), nerr, err)
-		}
 		return err
 	}
 
@@ -338,6 +337,7 @@ func configureInterface(nlh *netlink.Handle, iface netlink.Link, i *nwIface) err
 		{setInterfaceIPv6, fmt.Sprintf("error setting interface %q IPv6 to %v", ifaceName, i.AddressIPv6())},
 		{setInterfaceMaster, fmt.Sprintf("error setting interface %q master to %q", ifaceName, i.DstMaster())},
 		{setInterfaceLinkLocalIPs, fmt.Sprintf("error setting interface %q link local IPs to %v", ifaceName, i.LinkLocalAddresses())},
+		{setInterfaceIPAliases, fmt.Sprintf("error setting interface %q IP Aliases to %v", ifaceName, i.IPAliases())},
 	}
 
 	for _, config := range ifaceConfigurators {
@@ -399,6 +399,16 @@ func setInterfaceLinkLocalIPs(nlh *netlink.Handle, iface netlink.Link, i *nwIfac
 	return nil
 }
 
+func setInterfaceIPAliases(nlh *netlink.Handle, iface netlink.Link, i *nwIface) error {
+	for _, si := range i.IPAliases() {
+		ipAddr := &netlink.Addr{IPNet: si}
+		if err := nlh.AddrAdd(iface, ipAddr); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func setInterfaceName(nlh *netlink.Handle, iface netlink.Link, i *nwIface) error {
 	return nlh.LinkSetName(iface, i.DstName())
 }
@@ -415,6 +425,31 @@ func setInterfaceRoutes(nlh *netlink.Handle, iface netlink.Link, i *nwIface) err
 		}
 	}
 	return nil
+}
+
+// In older kernels (like the one in Centos 6.6 distro) sysctl does not have netns support. Therefore
+// we cannot gather the statistics from /sys/class/net/<dev>/statistics/<counter> files. Per-netns stats
+// are naturally found in /proc/net/dev in kernels which support netns (ifconfig relies on that).
+const (
+	netStatsFile = "/proc/net/dev"
+	base         = "[ ]*%s:([ ]+[0-9]+){16}"
+)
+
+func scanInterfaceStats(data, ifName string, i *types.InterfaceStatistics) error {
+	var (
+		bktStr string
+		bkt    uint64
+	)
+
+	regex := fmt.Sprintf(base, ifName)
+	re := regexp.MustCompile(regex)
+	line := re.FindString(data)
+
+	_, err := fmt.Sscanf(line, "%s %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d",
+		&bktStr, &i.RxBytes, &i.RxPackets, &i.RxErrors, &i.RxDropped, &bkt, &bkt, &bkt,
+		&bkt, &i.TxBytes, &i.TxPackets, &i.TxErrors, &i.TxDropped, &bkt, &bkt, &bkt, &bkt)
+
+	return err
 }
 
 func checkRouteConflict(nlh *netlink.Handle, address *net.IPNet, family int) error {

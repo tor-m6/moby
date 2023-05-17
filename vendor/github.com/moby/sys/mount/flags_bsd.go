@@ -1,5 +1,5 @@
-//go:build freebsd || openbsd
-// +build freebsd openbsd
+//go:build freebsd || openbsd || inno
+// +build freebsd openbsd inno
 
 package mount
 

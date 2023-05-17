@@ -250,7 +250,6 @@ func makeWindowsLayer(w io.Writer) (io.Writer, func(error), chan error) {
 					return err
 				}
 				if h.Size > 0 {
-					//nolint:gosec // never read into memory
 					if _, err := io.Copy(tarWriter, tarReader); err != nil {
 						return err
 					}
@@ -263,6 +262,7 @@ func makeWindowsLayer(w io.Writer) (io.Writer, func(error), chan error) {
 		}
 		pw.CloseWithError(err)
 		done <- err
+		return
 	}()
 
 	discard := func(err error) {

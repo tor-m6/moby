@@ -4,23 +4,21 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/ioutil"
 	nethttp "net/http"
 	"time"
 
 	"github.com/containerd/containerd/content"
 	"github.com/containerd/containerd/images"
-	"github.com/containerd/containerd/leases"
 	"github.com/containerd/containerd/platforms"
 	"github.com/containerd/containerd/rootfs"
 	"github.com/docker/docker/builder/builder-next/adapters/containerimage"
-	mobyexporter "github.com/docker/docker/builder/builder-next/exporter"
 	distmetadata "github.com/docker/docker/distribution/metadata"
 	"github.com/docker/docker/distribution/xfer"
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/layer"
 	pkgprogress "github.com/docker/docker/pkg/progress"
 	"github.com/moby/buildkit/cache"
-	cacheconfig "github.com/moby/buildkit/cache/config"
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/executor"
@@ -39,19 +37,15 @@ import (
 	"github.com/moby/buildkit/source/http"
 	"github.com/moby/buildkit/source/local"
 	"github.com/moby/buildkit/util/archutil"
+	"github.com/moby/buildkit/util/compression"
 	"github.com/moby/buildkit/util/contentutil"
 	"github.com/moby/buildkit/util/progress"
-	"github.com/moby/buildkit/version"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/semaphore"
 )
-
-func init() {
-	version.Version = "v0.11.0-rc3"
-}
 
 const labelCreatedAt = "buildkit/createdat"
 
@@ -70,7 +64,6 @@ type Opt struct {
 	Snapshotter       snapshot.Snapshotter
 	ContentStore      content.Store
 	CacheManager      cache.Manager
-	LeaseManager      leases.Manager
 	ImageSource       *containerimage.Source
 	DownloadManager   *xfer.LayerDownloadManager
 	V2MetadataService distmetadata.V2MetadataService
@@ -86,10 +79,6 @@ type Worker struct {
 	Opt
 	SourceManager *source.Manager
 }
-
-var _ interface {
-	GetRemotes(context.Context, cache.ImmutableRef, bool, cacheconfig.RefConfig, bool, session.Group) ([]*solver.Remote, error)
-} = &Worker{}
 
 // NewWorker instantiates a local worker
 func NewWorker(opt Opt) (*Worker, error) {
@@ -169,28 +158,9 @@ func (w *Worker) GCPolicy() []client.PruneInfo {
 	return w.Opt.GCPolicy
 }
 
-// BuildkitVersion returns BuildKit version
-func (w *Worker) BuildkitVersion() client.BuildkitVersion {
-	return client.BuildkitVersion{
-		Package:  version.Package,
-		Version:  version.Version + "-moby",
-		Revision: version.Revision,
-	}
-}
-
-// Close closes the worker and releases all resources
-func (w *Worker) Close() error {
-	return nil
-}
-
 // ContentStore returns content store
 func (w *Worker) ContentStore() content.Store {
 	return w.Opt.ContentStore
-}
-
-// LeaseManager returns leases.Manager for the worker
-func (w *Worker) LeaseManager() leases.Manager {
-	return w.Opt.LeaseManager
 }
 
 // LoadRef loads a reference by ID
@@ -199,12 +169,6 @@ func (w *Worker) LoadRef(ctx context.Context, id string, hidden bool) (cache.Imm
 	if hidden {
 		opts = append(opts, cache.NoUpdateLastUsed)
 	}
-	if id == "" {
-		// results can have nil refs if they are optimized out to be equal to scratch,
-		// i.e. Diff(A,A) == scratch
-		return nil, nil
-	}
-
 	return w.CacheManager().Get(ctx, id, nil, opts...)
 }
 
@@ -249,7 +213,7 @@ func (w *Worker) Prune(ctx context.Context, ch chan client.UsageInfo, info ...cl
 // Exporter returns exporter by name
 func (w *Worker) Exporter(name string, sm *session.Manager) (exporter.Exporter, error) {
 	switch name {
-	case mobyexporter.Moby:
+	case "moby":
 		return w.Opt.Exporter, nil
 	case client.ExporterLocal:
 		return localexporter.New(localexporter.Opt{
@@ -264,11 +228,8 @@ func (w *Worker) Exporter(name string, sm *session.Manager) (exporter.Exporter, 
 	}
 }
 
-// GetRemotes returns the remote snapshot references given a local reference
-func (w *Worker) GetRemotes(ctx context.Context, ref cache.ImmutableRef, createIfNeeded bool, _ cacheconfig.RefConfig, all bool, s session.Group) ([]*solver.Remote, error) {
-	if ref == nil {
-		return nil, nil
-	}
+// GetRemote returns a remote snapshot reference for a local one
+func (w *Worker) GetRemote(ctx context.Context, ref cache.ImmutableRef, createIfNeeded bool, _ compression.Type, s session.Group) (*solver.Remote, error) {
 	var diffIDs []layer.DiffID
 	var err error
 	if !createIfNeeded {
@@ -298,10 +259,10 @@ func (w *Worker) GetRemotes(ctx context.Context, ref cache.ImmutableRef, createI
 		}
 	}
 
-	return []*solver.Remote{{
+	return &solver.Remote{
 		Descriptors: descriptors,
 		Provider:    &emptyProvider{},
-	}}, nil
+	}, nil
 }
 
 // PruneCacheMounts removes the current cache snapshots for specified IDs
@@ -464,7 +425,7 @@ func (ld *layerDescriptor) Download(ctx context.Context, progressOutput pkgprogr
 		return nil, 0, err
 	}
 
-	return io.NopCloser(content.NewReader(ra)), ld.desc.Size, nil
+	return ioutil.NopCloser(content.NewReader(ra)), ld.desc.Size, nil
 }
 
 func (ld *layerDescriptor) Close() {

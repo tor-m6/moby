@@ -1,6 +1,3 @@
-//go:build linux
-// +build linux
-
 package ipvlan
 
 import (
@@ -8,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/docker/docker/libnetwork/ns"
-	"github.com/sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
+	"github.com/docker/libnetwork/ns"
 	"github.com/vishvananda/netlink"
 )
 
@@ -20,16 +17,11 @@ const (
 )
 
 // createIPVlan Create the ipvlan slave specifying the source name
-func createIPVlan(containerIfName, parent, ipvlanMode, ipvlanFlag string) (string, error) {
-	// Set the ipvlan mode and flag. Default is L2 bridge
+func createIPVlan(containerIfName, parent, ipvlanMode string) (string, error) {
+	// Set the ipvlan mode. Default is bridge mode
 	mode, err := setIPVlanMode(ipvlanMode)
 	if err != nil {
 		return "", fmt.Errorf("Unsupported %s ipvlan mode: %v", ipvlanMode, err)
-	}
-	// Set the ipvlan flag. Default is bridge
-	flag, err := setIPVlanFlag(ipvlanFlag)
-	if err != nil {
-		return "", fmt.Errorf("Unsupported %s ipvlan flag: %v", ipvlanFlag, err)
 	}
 	// verify the Docker host interface acting as the macvlan parent iface exists
 	if !parentExists(parent) {
@@ -38,7 +30,7 @@ func createIPVlan(containerIfName, parent, ipvlanMode, ipvlanFlag string) (strin
 	// Get the link for the master index (Example: the docker host eth iface)
 	parentLink, err := ns.NlHandle().LinkByName(parent)
 	if err != nil {
-		return "", fmt.Errorf("error occurred looking up the ipvlan parent iface %s error: %s", parent, err)
+		return "", fmt.Errorf("error occoured looking up the %s parent iface %s error: %s", ipvlanType, parent, err)
 	}
 	// Create an ipvlan link
 	ipvlan := &netlink.IPVlan{
@@ -47,48 +39,35 @@ func createIPVlan(containerIfName, parent, ipvlanMode, ipvlanFlag string) (strin
 			ParentIndex: parentLink.Attrs().Index,
 		},
 		Mode: mode,
-		Flag: flag,
 	}
 	if err := ns.NlHandle().LinkAdd(ipvlan); err != nil {
 		// If a user creates a macvlan and ipvlan on same parent, only one slave iface can be active at a time.
-		return "", fmt.Errorf("failed to create the ipvlan port: %v", err)
+		return "", fmt.Errorf("failed to create the %s port: %v", ipvlanType, err)
 	}
 
 	return ipvlan.Attrs().Name, nil
 }
 
-// setIPVlanMode setter for one of the three ipvlan port types
+// setIPVlanMode setter for one of the two ipvlan port types
 func setIPVlanMode(mode string) (netlink.IPVlanMode, error) {
 	switch mode {
 	case modeL2:
 		return netlink.IPVLAN_MODE_L2, nil
 	case modeL3:
 		return netlink.IPVLAN_MODE_L3, nil
-	case modeL3S:
-		return netlink.IPVLAN_MODE_L3S, nil
 	default:
 		return 0, fmt.Errorf("Unknown ipvlan mode: %s", mode)
-	}
-}
-
-// setIPVlanFlag setter for one of the three ipvlan port flags
-func setIPVlanFlag(flag string) (netlink.IPVlanFlag, error) {
-	switch flag {
-	case flagBridge:
-		return netlink.IPVLAN_FLAG_BRIDGE, nil
-	case flagPrivate:
-		return netlink.IPVLAN_FLAG_PRIVATE, nil
-	case flagVepa:
-		return netlink.IPVLAN_FLAG_VEPA, nil
-	default:
-		return 0, fmt.Errorf("unknown ipvlan flag: %s", flag)
 	}
 }
 
 // parentExists check if the specified interface exists in the default namespace
 func parentExists(ifaceStr string) bool {
 	_, err := ns.NlHandle().LinkByName(ifaceStr)
-	return err == nil
+	if err != nil {
+		return false
+	}
+
+	return true
 }
 
 // createVlanLink parses sub-interfaces and vlan id for creation
@@ -171,7 +150,7 @@ func parseVlan(linkName string) (string, int, error) {
 	}
 	// Check if the interface exists
 	if !parentExists(parent) {
-		return "", 0, fmt.Errorf("-o parent interface was not found on the host: %s", parent)
+		return "", 0, fmt.Errorf("-o parent interface does was not found on the host: %s", parent)
 	}
 
 	return parent, vidInt, nil
@@ -190,7 +169,7 @@ func createDummyLink(dummyName, truncNetID string) error {
 	}
 	parentDummyLink, err := ns.NlHandle().LinkByName(dummyName)
 	if err != nil {
-		return fmt.Errorf("error occurred looking up the ipvlan parent iface %s error: %s", dummyName, err)
+		return fmt.Errorf("error occoured looking up the %s parent iface %s error: %s", ipvlanType, dummyName, err)
 	}
 	// bring the new netlink iface up
 	if err := ns.NlHandle().LinkSetUp(parentDummyLink); err != nil {

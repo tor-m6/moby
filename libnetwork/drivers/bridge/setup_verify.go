@@ -1,15 +1,12 @@
-//go:build linux
-// +build linux
-
 package bridge
 
 import (
 	"fmt"
 	"strings"
 
-	"github.com/docker/docker/libnetwork/ns"
-	"github.com/docker/docker/libnetwork/types"
-	"github.com/sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
+	"github.com/docker/libnetwork/ns"
+	"github.com/docker/libnetwork/types"
 	"github.com/vishvananda/netlink"
 )
 
@@ -40,7 +37,6 @@ func setupVerifyAndReconcile(config *networkConfiguration, i *bridgeInterface) e
 
 	// Release any residual IPv6 address that might be there because of older daemon instances
 	for _, addrv6 := range addrsv6 {
-		addrv6 := addrv6
 		if addrv6.IP.IsGlobalUnicast() && !types.CompareIPNet(addrv6.IPNet, i.bridgeIPv6) {
 			if err := i.nlh.AddrDel(i.Link, &addrv6); err != nil {
 				logrus.Warnf("Failed to remove residual IPv6 address %s from bridge: %v", addrv6.IPNet, err)

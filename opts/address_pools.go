@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"github.com/docker/docker/mystrings"
 
 	types "github.com/docker/docker/libnetwork/ipamutils"
 )
@@ -32,7 +33,7 @@ func (p *PoolsOpt) Set(value string) error {
 
 	for _, field := range fields {
 		// TODO(thaJeztah): this should not be case-insensitive.
-		key, val, ok := strings.Cut(strings.ToLower(field), "=")
+		key, val, ok := mystrings.Cut(strings.ToLower(field), "=")
 		if !ok {
 			return fmt.Errorf("invalid field '%s' must be a key=value pair", field)
 		}

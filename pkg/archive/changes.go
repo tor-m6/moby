@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/docker/docker/myos"
 	"github.com/docker/docker/pkg/idtools"
 	"github.com/docker/docker/pkg/pools"
 	"github.com/docker/docker/pkg/system"
@@ -345,7 +346,7 @@ func ChangesDirs(newDir, oldDir string) ([]Change, error) {
 		oldRoot, newRoot *FileInfo
 	)
 	if oldDir == "" {
-		emptyDir, err := os.MkdirTemp("", "empty")
+		emptyDir, err := myos.MkdirTemp("", "empty")
 		if err != nil {
 			return nil, err
 		}

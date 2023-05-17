@@ -1,6 +1,3 @@
-//go:build linux
-// +build linux
-
 package bridge
 
 import (
@@ -8,8 +5,8 @@ import (
 	"net"
 	"testing"
 
-	"github.com/docker/docker/libnetwork/netutils"
-	"github.com/docker/docker/libnetwork/testutils"
+	"github.com/docker/libnetwork/netutils"
+	"github.com/docker/libnetwork/testutils"
 	"github.com/vishvananda/netlink"
 )
 
@@ -20,7 +17,7 @@ func TestSetupNewBridge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer nh.Close()
+	defer nh.Delete()
 
 	config := &networkConfiguration{BridgeName: DefaultBridgeName}
 	br := &bridgeInterface{nlh: nh}
@@ -46,7 +43,7 @@ func TestSetupNewNonDefaultBridge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer nh.Close()
+	defer nh.Delete()
 
 	config := &networkConfiguration{BridgeName: "test0", DefaultBridge: true}
 	br := &bridgeInterface{nlh: nh}
@@ -68,7 +65,7 @@ func TestSetupDeviceUp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer nh.Close()
+	defer nh.Delete()
 
 	config := &networkConfiguration{BridgeName: DefaultBridgeName}
 	br := &bridgeInterface{nlh: nh}
@@ -91,7 +88,7 @@ func TestGenerateRandomMAC(t *testing.T) {
 
 	mac1 := netutils.GenerateRandomMAC()
 	mac2 := netutils.GenerateRandomMAC()
-	if bytes.Equal(mac1, mac2) {
+	if bytes.Compare(mac1, mac2) == 0 {
 		t.Fatalf("Generated twice the same MAC address %v", mac1)
 	}
 }

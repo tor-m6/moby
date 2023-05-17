@@ -7,6 +7,7 @@ package filters // import "github.com/docker/docker/api/types/filters"
 import (
 	"encoding/json"
 	"regexp"
+	"github.com/docker/docker/mystrings"
 	"strings"
 
 	"github.com/docker/docker/api/types/versions"
@@ -162,7 +163,7 @@ func (args Args) MatchKVList(key string, sources map[string]string) bool {
 	}
 
 	for value := range fieldValues {
-		testK, testV, hasValue := strings.Cut(value, "=")
+		testK, testV, hasValue := mystrings.Cut(value, "=")
 
 		v, ok := sources[testK]
 		if !ok {

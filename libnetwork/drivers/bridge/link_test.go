@@ -1,12 +1,9 @@
-//go:build linux
-// +build linux
-
 package bridge
 
 import (
 	"testing"
 
-	"github.com/docker/docker/libnetwork/types"
+	"github.com/docker/libnetwork/types"
 )
 
 func getPorts() []types.TransportPort {

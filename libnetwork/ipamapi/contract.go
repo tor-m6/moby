@@ -4,11 +4,15 @@ package ipamapi
 import (
 	"net"
 
-	"github.com/docker/docker/libnetwork/types"
 	"github.com/docker/docker/pkg/plugingetter"
+	"github.com/docker/libnetwork/discoverapi"
+	"github.com/docker/libnetwork/types"
 )
 
-// IPAM plugin types
+/********************
+ * IPAM plugin types
+ ********************/
+
 const (
 	// DefaultIPAM is the name of the built-in default ipam driver
 	DefaultIPAM = "default"
@@ -20,22 +24,19 @@ const (
 	RequestAddressType = "RequestAddressType"
 )
 
-// Registerer provides a callback interface for registering IPAM instances into libnetwork.
-type Registerer interface {
-	// RegisterIpamDriver provides a way for drivers to dynamically register with libnetwork
+// Callback provides a Callback interface for registering an IPAM instance into LibNetwork
+type Callback interface {
+	// GetPluginGetter returns the pluginv2 getter.
+	GetPluginGetter() plugingetter.PluginGetter
+	// RegisterIpamDriver provides a way for Remote drivers to dynamically register with libnetwork
 	RegisterIpamDriver(name string, driver Ipam) error
-	// RegisterIpamDriverWithCapabilities provides a way for drivers to dynamically register with libnetwork and specify capabilities
+	// RegisterIpamDriverWithCapabilities provides a way for Remote drivers to dynamically register with libnetwork and specify capabilities
 	RegisterIpamDriverWithCapabilities(name string, driver Ipam, capability *Capability) error
 }
 
-// Callback is a legacy interface for registering an IPAM instance into LibNetwork.
-//
-// The narrower [Registerer] interface is preferred for new code.
-type Callback interface {
-	Registerer
-	// GetPluginGetter returns the pluginv2 getter.
-	GetPluginGetter() plugingetter.PluginGetter
-}
+/**************
+ * IPAM Errors
+ **************/
 
 // Well-known errors returned by IPAM
 var (
@@ -55,9 +56,15 @@ var (
 	ErrBadPool             = types.BadRequestErrorf("Address space does not contain specified address pool")
 )
 
+/*******************************
+ * IPAM Service Interface
+ *******************************/
+
 // Ipam represents the interface the IPAM service plugins must implement
 // in order to allow injection/modification of IPAM database.
 type Ipam interface {
+	discoverapi.Discover
+
 	// GetDefaultAddressSpaces returns the default local and global address spaces for this ipam
 	GetDefaultAddressSpaces() (string, string, error)
 	// RequestPool returns an address pool along with its unique id. Address space is a mandatory field
@@ -69,12 +76,12 @@ type Ipam interface {
 	RequestPool(addressSpace, pool, subPool string, options map[string]string, v6 bool) (string, *net.IPNet, map[string]string, error)
 	// ReleasePool releases the address pool identified by the passed id
 	ReleasePool(poolID string) error
-	// RequestAddress request an address from the specified pool ID. Input options or required IP can be passed.
+	// Request address from the specified pool ID. Input options or required IP can be passed.
 	RequestAddress(string, net.IP, map[string]string) (*net.IPNet, map[string]string, error)
-	// ReleaseAddress releases the address from the specified pool ID.
+	// Release the address from the specified pool ID
 	ReleaseAddress(string, net.IP) error
 
-	// IsBuiltIn returns true if it is a built-in driver.
+	//IsBuiltIn returns true if it is a built-in driver.
 	IsBuiltIn() bool
 }
 

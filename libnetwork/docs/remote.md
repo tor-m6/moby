@@ -7,7 +7,7 @@ For the semantics of driver methods, which correspond to the protocol below, ple
 
 ## LibNetwork integration with the Docker `plugins` package
 
-When LibNetwork initializes the `drivers.remote` package with the `Init()` function, it passes a `DriverCallback` as a parameter, which implements `RegisterDriver()`. The remote driver package uses this interface to register remote drivers with LibNetwork's `NetworkController`, by supplying it in a `plugins.Handle` callback.
+When LibNetwork initialises the `drivers.remote` package with the `Init()` function, it passes a `DriverCallback` as a parameter, which implements `RegisterDriver()`. The remote driver package uses this interface to register remote drivers with LibNetwork's `NetworkController`, by supplying it in a `plugins.Handle` callback.
 
 The callback is invoked when a driver is loaded with the `plugins.Get` API call. How that comes about is out of scope here (but it might be, for instance, when that driver is mentioned by the user).
 
@@ -73,7 +73,7 @@ When the proxy is asked to create a network, the remote process shall receive a 
 		{
 			"AddressSpace": string,
 			"Pool": ipv4-cidr-string,
-			"Gateway" : ipv4-cidr-string,
+			"Gateway" : ipv4-address"
 			"AuxAddresses": {
 				"<identifier1>" : "<ipv4-address1>",
 				"<identifier2>" : "<ipv4-address2>",
@@ -85,7 +85,7 @@ When the proxy is asked to create a network, the remote process shall receive a 
 		{
 			"AddressSpace": string,
 			"Pool": ipv6-cidr-string,
-			"Gateway" : ipv6-cidr-string,
+			"Gateway" : ipv6-address"
 			"AuxAddresses": {
 				"<identifier1>" : "<ipv6-address1>",
 				"<identifier2>" : "<ipv6-address2>",
@@ -103,7 +103,7 @@ When the proxy is asked to create a network, the remote process shall receive a 
 * `IPv4Data` and `IPv6Data` are the ip-addressing data configured by the user and managed by IPAM driver. The network driver is expected to honor the ip-addressing data supplied by IPAM driver. The data include,
 * `AddressSpace` : A unique string represents an isolated space for IP Addressing 
 * `Pool` : A range of IP Addresses represented in CIDR format address/mask. Since, the IPAM driver is responsible for allocating container ip-addresses, the network driver can make use of this information for the network plumbing purposes.
-* `Gateway` : Optionally, the IPAM driver may provide a Gateway IP address in CIDR format for the subnet represented by the Pool. The network driver can make use of this information for the network plumbing purposes.
+* `Gateway` : Optionally, the IPAM driver may provide a Gateway for the subnet represented by the Pool. The network driver can make use of this information for the network plumbing purposes.
 * `AuxAddresses` : A list of pre-allocated ip-addresses with an associated identifier as provided by the user to assist network driver if it requires specific ip-addresses for its operation.
 
 The response indicating success is empty:

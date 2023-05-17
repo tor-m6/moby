@@ -1,6 +1,3 @@
-//go:build linux
-// +build linux
-
 package macvlan
 
 import (
@@ -8,11 +5,11 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/docker/docker/libnetwork/datastore"
-	"github.com/docker/docker/libnetwork/discoverapi"
-	"github.com/docker/docker/libnetwork/netlabel"
-	"github.com/docker/docker/libnetwork/types"
-	"github.com/sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
+	"github.com/docker/libnetwork/datastore"
+	"github.com/docker/libnetwork/discoverapi"
+	"github.com/docker/libnetwork/netlabel"
+	"github.com/docker/libnetwork/types"
 )
 
 const (
@@ -31,11 +28,16 @@ type configuration struct {
 	Parent           string
 	MacvlanMode      string
 	CreatedSlaveLink bool
-	Ipv4Subnets      []*ipSubnet
-	Ipv6Subnets      []*ipSubnet
+	Ipv4Subnets      []*ipv4Subnet
+	Ipv6Subnets      []*ipv6Subnet
 }
 
-type ipSubnet struct {
+type ipv4Subnet struct {
+	SubnetIP string
+	GwIP     string
+}
+
+type ipv6Subnet struct {
 	SubnetIP string
 	GwIP     string
 }
@@ -53,14 +55,7 @@ func (d *driver) initStore(option map[string]interface{}) error {
 			return types.InternalErrorf("macvlan driver failed to initialize data store: %v", err)
 		}
 
-		err = d.populateNetworks()
-		if err != nil {
-			return err
-		}
-		err = d.populateEndpoints()
-		if err != nil {
-			return err
-		}
+		return d.populateNetworks()
 	}
 
 	return nil
@@ -78,7 +73,7 @@ func (d *driver) populateNetworks() error {
 	}
 	for _, kvo := range kvol {
 		config := kvo.(*configuration)
-		if _, err = d.createNetwork(config); err != nil {
+		if err = d.createNetwork(config); err != nil {
 			logrus.Warnf("Could not create macvlan network for id %s from persistent state", config.ID)
 		}
 	}
@@ -100,15 +95,15 @@ func (d *driver) populateEndpoints() error {
 		ep := kvo.(*endpoint)
 		n, ok := d.networks[ep.nid]
 		if !ok {
-			logrus.Debugf("Network (%.7s) not found for restored macvlan endpoint (%.7s)", ep.nid, ep.id)
-			logrus.Debugf("Deleting stale macvlan endpoint (%.7s) from store", ep.id)
+			logrus.Debugf("Network (%s) not found for restored macvlan endpoint (%s)", ep.nid[0:7], ep.id[0:7])
+			logrus.Debugf("Deleting stale macvlan endpoint (%s) from store", ep.id[0:7])
 			if err := d.storeDelete(ep); err != nil {
-				logrus.Debugf("Failed to delete stale macvlan endpoint (%.7s) from store", ep.id)
+				logrus.Debugf("Failed to delete stale macvlan endpoint (%s) from store", ep.id[0:7])
 			}
 			continue
 		}
 		n.endpoints[ep.id] = ep
-		logrus.Debugf("Endpoint (%.7s) restored to network (%.7s)", ep.id, ep.nid)
+		logrus.Debugf("Endpoint (%s) restored to network (%s)", ep.id[0:7], ep.nid[0:7])
 	}
 
 	return nil

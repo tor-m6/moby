@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/docker/docker/myos"
 	"github.com/containerd/containerd/mount"
 	"github.com/docker/docker/container"
 	"github.com/sirupsen/logrus"
@@ -21,7 +22,7 @@ func (i *ImageService) Mount(ctx context.Context, container *container.Container
 
 	// The temporary location will be under /var/lib/docker/... because
 	// we set the `TMPDIR`
-	root, err := os.MkdirTemp("", fmt.Sprintf("%s_rootfs-mount", container.ID))
+	root, err := myos.MkdirTemp("", fmt.Sprintf("%s_rootfs-mount", container.ID))
 	if err != nil {
 		return fmt.Errorf("failed to create temp dir: %w", err)
 	}

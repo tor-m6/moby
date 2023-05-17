@@ -1,22 +1,31 @@
-//go:build linux
-// +build linux
-
 package macvlan
 
 import (
 	"fmt"
 
-	"github.com/docker/docker/libnetwork/driverapi"
-	"github.com/docker/docker/libnetwork/netlabel"
-	"github.com/docker/docker/libnetwork/ns"
-	"github.com/docker/docker/libnetwork/options"
-	"github.com/docker/docker/libnetwork/types"
+	"github.com/Sirupsen/logrus"
+	"github.com/docker/docker/pkg/parsers/kernel"
 	"github.com/docker/docker/pkg/stringid"
-	"github.com/sirupsen/logrus"
+	"github.com/docker/libnetwork/driverapi"
+	"github.com/docker/libnetwork/netlabel"
+	"github.com/docker/libnetwork/ns"
+	"github.com/docker/libnetwork/options"
+	"github.com/docker/libnetwork/osl"
+	"github.com/docker/libnetwork/types"
 )
 
 // CreateNetwork the network for the specified driver type
 func (d *driver) CreateNetwork(nid string, option map[string]interface{}, nInfo driverapi.NetworkInfo, ipV4Data, ipV6Data []driverapi.IPAMData) error {
+	defer osl.InitOSContext()()
+	kv, err := kernel.GetKernelVersion()
+	if err != nil {
+		return fmt.Errorf("failed to check kernel version for %s driver support: %v", macvlanType, err)
+	}
+	// ensure Kernel version is >= v3.9 for macvlan support
+	if kv.Kernel < macvlanKernelVer || (kv.Kernel == macvlanKernelVer && kv.Major < macvlanMajorVer) {
+		return fmt.Errorf("kernel version failed to meet the minimum macvlan kernel requirement of %d.%d, found %d.%d.%d",
+			macvlanKernelVer, macvlanMajorVer, kv.Kernel, kv.Major, kv.Minor)
+	}
 	// reject a null v4 network
 	if len(ipV4Data) == 0 || ipV4Data[0].Pool.String() == "0.0.0.0/0" {
 		return fmt.Errorf("ipv4 pool is empty")
@@ -26,26 +35,44 @@ func (d *driver) CreateNetwork(nid string, option map[string]interface{}, nInfo 
 	if err != nil {
 		return err
 	}
-	config.processIPAM(ipV4Data, ipV6Data)
-
-	// if parent interface not specified, create a dummy type link to use named dummy+net_id
-	if config.Parent == "" {
-		config.Parent = getDummyName(stringid.TruncateID(config.ID))
-	}
-	foundExisting, err := d.createNetwork(config)
+	config.ID = nid
+	err = config.processIPAM(nid, ipV4Data, ipV6Data)
 	if err != nil {
 		return err
 	}
-
-	if foundExisting {
-		return types.InternalMaskableErrorf("restoring existing network %s", config.ID)
+	// verify the macvlan mode from -o macvlan_mode option
+	switch config.MacvlanMode {
+	case "", modeBridge:
+		// default to macvlan bridge mode if -o macvlan_mode is empty
+		config.MacvlanMode = modeBridge
+	case modePrivate:
+		config.MacvlanMode = modePrivate
+	case modePassthru:
+		config.MacvlanMode = modePassthru
+	case modeVepa:
+		config.MacvlanMode = modeVepa
+	default:
+		return fmt.Errorf("requested macvlan mode '%s' is not valid, 'bridge' mode is the macvlan driver default", config.MacvlanMode)
 	}
-
+	// loopback is not a valid parent link
+	if config.Parent == "lo" {
+		return fmt.Errorf("loopback interface is not a valid %s parent link", macvlanType)
+	}
+	// if parent interface not specified, create a dummy type link to use named dummy+net_id
+	if config.Parent == "" {
+		config.Parent = getDummyName(stringid.TruncateID(config.ID))
+		// empty parent and --internal are handled the same. Set here to update k/v
+		config.Internal = true
+	}
+	err = d.createNetwork(config)
+	if err != nil {
+		return err
+	}
 	// update persistent db, rollback on fail
 	err = d.storeUpdate(config)
 	if err != nil {
 		d.deleteNetwork(config.ID)
-		logrus.Debugf("encountered an error rolling back a network create for %s : %v", config.ID, err)
+		logrus.Debugf("encoutered an error rolling back a network create for %s : %v", config.ID, err)
 		return err
 	}
 
@@ -53,59 +80,53 @@ func (d *driver) CreateNetwork(nid string, option map[string]interface{}, nInfo 
 }
 
 // createNetwork is used by new network callbacks and persistent network cache
-func (d *driver) createNetwork(config *configuration) (bool, error) {
-	foundExisting := false
+func (d *driver) createNetwork(config *configuration) error {
 	networkList := d.getNetworks()
 	for _, nw := range networkList {
 		if config.Parent == nw.config.Parent {
-			if config.ID != nw.config.ID {
-				return false, fmt.Errorf("network %s is already using parent interface %s",
-					getDummyName(stringid.TruncateID(nw.config.ID)), config.Parent)
-			}
-			logrus.Debugf("Create Network for the same ID %s\n", config.ID)
-			foundExisting = true
-			break
+			return fmt.Errorf("network %s is already using parent interface %s",
+				getDummyName(stringid.TruncateID(nw.config.ID)), config.Parent)
 		}
 	}
 	if !parentExists(config.Parent) {
-		// Create a dummy link if a dummy name is set for parent
-		if dummyName := getDummyName(stringid.TruncateID(config.ID)); dummyName == config.Parent {
-			err := createDummyLink(config.Parent, dummyName)
+		// if the --internal flag is set, create a dummy link
+		if config.Internal {
+			err := createDummyLink(config.Parent, getDummyName(stringid.TruncateID(config.ID)))
 			if err != nil {
-				return false, err
+				return err
 			}
 			config.CreatedSlaveLink = true
-
-			// notify the user in logs that they have limited communications
-			logrus.Debugf("Empty -o parent= flags limit communications to other containers inside of network: %s",
-				config.Parent)
+			// notify the user in logs they have limited comunicatins
+			if config.Parent == getDummyName(stringid.TruncateID(config.ID)) {
+				logrus.Debugf("Empty -o parent= and --internal flags limit communications to other containers inside of network: %s",
+					config.Parent)
+			}
 		} else {
 			// if the subinterface parent_iface.vlan_id checks do not pass, return err.
 			//  a valid example is 'eth0.10' for a parent iface 'eth0' with a vlan id '10'
 			err := createVlanLink(config.Parent)
 			if err != nil {
-				return false, err
+				return err
 			}
 			// if driver created the networks slave link, record it for future deletion
 			config.CreatedSlaveLink = true
 		}
 	}
-	if !foundExisting {
-		n := &network{
-			id:        config.ID,
-			driver:    d,
-			endpoints: endpointTable{},
-			config:    config,
-		}
-		// add the network
-		d.addNetwork(n)
+	n := &network{
+		id:        config.ID,
+		driver:    d,
+		endpoints: endpointTable{},
+		config:    config,
 	}
+	// add the *network
+	d.addNetwork(n)
 
-	return foundExisting, nil
+	return nil
 }
 
 // DeleteNetwork deletes the network for the specified driver type
 func (d *driver) DeleteNetwork(nid string) error {
+	defer osl.InitOSContext()()
 	n := d.network(nid)
 	if n == nil {
 		return fmt.Errorf("network id %s not found", nid)
@@ -133,13 +154,11 @@ func (d *driver) DeleteNetwork(nid string) error {
 	}
 	for _, ep := range n.endpoints {
 		if link, err := ns.NlHandle().LinkByName(ep.srcName); err == nil {
-			if err := ns.NlHandle().LinkDel(link); err != nil {
-				logrus.WithError(err).Warnf("Failed to delete interface (%s)'s link on endpoint (%s) delete", ep.srcName, ep.id)
-			}
+			ns.NlHandle().LinkDel(link)
 		}
 
 		if err := d.storeDelete(ep); err != nil {
-			logrus.Warnf("Failed to remove macvlan endpoint %.7s from store: %v", ep.id, err)
+			logrus.Warnf("Failed to remove macvlan endpoint %s from store: %v", ep.id[0:7], err)
 		}
 	}
 	// delete the *network
@@ -164,54 +183,42 @@ func parseNetworkOptions(id string, option options.Generic) (*configuration, err
 			return nil, err
 		}
 	}
-	if val, ok := option[netlabel.Internal]; ok {
-		if internal, ok := val.(bool); ok && internal {
-			config.Internal = true
-		}
+	// setting the parent to "" will trigger an isolated network dummy parent link
+	if _, ok := option[netlabel.Internal]; ok {
+		config.Internal = true
+		// empty --parent= and --internal are handled the same.
+		config.Parent = ""
 	}
 
-	// verify the macvlan mode from -o macvlan_mode option
-	switch config.MacvlanMode {
-	case "":
-		// default to macvlan bridge mode if -o macvlan_mode is empty
-		config.MacvlanMode = modeBridge
-	case modeBridge, modePrivate, modePassthru, modeVepa:
-		// valid option
-	default:
-		return nil, fmt.Errorf("requested macvlan mode '%s' is not valid, 'bridge' mode is the macvlan driver default", config.MacvlanMode)
-	}
-
-	// loopback is not a valid parent link
-	if config.Parent == "lo" {
-		return nil, fmt.Errorf("loopback interface is not a valid macvlan parent link")
-	}
-
-	config.ID = id
 	return config, nil
 }
 
 // parseNetworkGenericOptions parses generic driver docker network options
 func parseNetworkGenericOptions(data interface{}) (*configuration, error) {
+	var (
+		err    error
+		config *configuration
+	)
 	switch opt := data.(type) {
 	case *configuration:
-		return opt, nil
+		config = opt
 	case map[string]string:
-		return newConfigFromLabels(opt), nil
+		config = &configuration{}
+		err = config.fromOptions(opt)
 	case options.Generic:
-		var config *configuration
-		opaqueConfig, err := options.GenerateFromModel(opt, config)
-		if err != nil {
-			return nil, err
+		var opaqueConfig interface{}
+		if opaqueConfig, err = options.GenerateFromModel(opt, config); err == nil {
+			config = opaqueConfig.(*configuration)
 		}
-		return opaqueConfig.(*configuration), nil
 	default:
-		return nil, types.BadRequestErrorf("unrecognized network configuration format: %v", opt)
+		err = types.BadRequestErrorf("unrecognized network configuration format: %v", opt)
 	}
+
+	return config, err
 }
 
-// newConfigFromLabels creates a new configuration from the given labels.
-func newConfigFromLabels(labels map[string]string) *configuration {
-	config := &configuration{}
+// fromOptions binds the generic options to networkConfiguration to cache
+func (config *configuration) fromOptions(labels map[string]string) error {
 	for label, value := range labels {
 		switch label {
 		case parentOpt:
@@ -223,21 +230,29 @@ func newConfigFromLabels(labels map[string]string) *configuration {
 		}
 	}
 
-	return config
+	return nil
 }
 
 // processIPAM parses v4 and v6 IP information and binds it to the network configuration
-func (config *configuration) processIPAM(ipamV4Data, ipamV6Data []driverapi.IPAMData) {
-	for _, ipd := range ipamV4Data {
-		config.Ipv4Subnets = append(config.Ipv4Subnets, &ipSubnet{
-			SubnetIP: ipd.Pool.String(),
-			GwIP:     ipd.Gateway.String(),
-		})
+func (config *configuration) processIPAM(id string, ipamV4Data, ipamV6Data []driverapi.IPAMData) error {
+	if len(ipamV4Data) > 0 {
+		for _, ipd := range ipamV4Data {
+			s := &ipv4Subnet{
+				SubnetIP: ipd.Pool.String(),
+				GwIP:     ipd.Gateway.String(),
+			}
+			config.Ipv4Subnets = append(config.Ipv4Subnets, s)
+		}
 	}
-	for _, ipd := range ipamV6Data {
-		config.Ipv6Subnets = append(config.Ipv6Subnets, &ipSubnet{
-			SubnetIP: ipd.Pool.String(),
-			GwIP:     ipd.Gateway.String(),
-		})
+	if len(ipamV6Data) > 0 {
+		for _, ipd := range ipamV6Data {
+			s := &ipv6Subnet{
+				SubnetIP: ipd.Pool.String(),
+				GwIP:     ipd.Gateway.String(),
+			}
+			config.Ipv6Subnets = append(config.Ipv6Subnets, s)
+		}
 	}
+
+	return nil
 }

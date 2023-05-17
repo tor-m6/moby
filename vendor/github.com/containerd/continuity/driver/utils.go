@@ -18,6 +18,7 @@ package driver
 
 import (
 	"io"
+	"io/ioutil"
 	"os"
 	"sort"
 )
@@ -30,7 +31,7 @@ func ReadFile(r Driver, filename string) ([]byte, error) {
 	}
 	defer f.Close()
 
-	data, err := io.ReadAll(f)
+	data, err := ioutil.ReadAll(f)
 	if err != nil {
 		return nil, err
 	}

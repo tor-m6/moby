@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/url"
 	"os"
 	"os/exec"
@@ -276,7 +277,7 @@ func (gs *gitSourceHandler) mountKnownHosts(ctx context.Context) (string, func()
 	if gs.src.KnownSSHHosts == "" {
 		return "", nil, errors.Errorf("no configured known hosts forwarded from the client")
 	}
-	knownHosts, err := os.CreateTemp("", "")
+	knownHosts, err := ioutil.TempFile("", "")
 	if err != nil {
 		return "", nil, err
 	}
@@ -549,7 +550,7 @@ func (gs *gitSourceHandler) Snapshot(ctx context.Context, g session.Group) (out 
 	} else {
 		cd := checkoutDir
 		if subdir != "." {
-			cd, err = os.MkdirTemp(cd, "checkout")
+			cd, err = ioutil.TempDir(cd, "checkout")
 			if err != nil {
 				return nil, errors.Wrapf(err, "failed to create temporary checkout dir")
 			}
@@ -594,7 +595,7 @@ func (gs *gitSourceHandler) Snapshot(ctx context.Context, g session.Group) (out 
 
 	if idmap := mount.IdentityMapping(); idmap != nil {
 		u := idmap.RootPair()
-		err := filepath.WalkDir(gitDir, func(p string, _ os.DirEntry, _ error) error {
+		err := filepath.Walk(gitDir, func(p string, f os.FileInfo, err error) error {
 			return os.Lchown(p, u.UID, u.GID)
 		})
 		if err != nil {

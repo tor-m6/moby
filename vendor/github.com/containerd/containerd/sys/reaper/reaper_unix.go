@@ -246,15 +246,15 @@ type exit struct {
 // exit information
 func reap(wait bool) (exits []exit, err error) {
 	var (
-		ws  unix.WaitStatus
-		rus unix.Rusage
+		ws  syscall.WaitStatus
+		rus syscall.Rusage
 	)
 	flag := unix.WNOHANG
 	if wait {
 		flag = 0
 	}
 	for {
-		pid, err := unix.Wait4(-1, &ws, flag, &rus)
+		pid, err := syscall.Wait4(-1, &ws, flag, &rus)
 		if err != nil {
 			if err == unix.ECHILD {
 				return exits, nil
@@ -275,7 +275,7 @@ const exitSignalOffset = 128
 
 // exitStatus returns the correct exit status for a process based on if it
 // was signaled or exited cleanly
-func exitStatus(status unix.WaitStatus) int {
+func exitStatus(status syscall.WaitStatus) int {
 	if status.Signaled() {
 		return exitSignalOffset + int(status.Signal())
 	}

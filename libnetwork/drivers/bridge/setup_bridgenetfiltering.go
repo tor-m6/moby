@@ -1,15 +1,13 @@
-//go:build linux
-// +build linux
-
 package bridge
 
 import (
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"syscall"
 
-	"github.com/sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
 )
 
 // Enumeration type saying which versions of IP protocol to process.
@@ -22,7 +20,7 @@ const (
 	ipvboth
 )
 
-// getIPVersion gets the IP version in use ( [ipv4], [ipv6] or [ipv4 and ipv6] )
+//Gets the IP version in use ( [ipv4], [ipv6] or [ipv4 and ipv6] )
 func getIPVersion(config *networkConfiguration) ipVersion {
 	ipVersion := ipv4
 	if config.AddressIPv6 != nil || config.EnableIPv6 {
@@ -51,7 +49,7 @@ func setupBridgeNetFiltering(config *networkConfiguration, i *bridgeInterface) e
 	return nil
 }
 
-// Enable bridge net filtering if ip forwarding is enabled. See github issue #11404
+//Enable bridge net filtering if ip forwarding is enabled. See github issue #11404
 func checkBridgeNetFiltering(config *networkConfiguration, i *bridgeInterface) error {
 	ipVer := getIPVersion(config)
 	iface := config.BridgeName
@@ -121,10 +119,10 @@ func getBridgeNFKernelParam(ipVer ipVersion) string {
 	}
 }
 
-// Gets the value of the kernel parameters located at the given path
+//Gets the value of the kernel parameters located at the given path
 func getKernelBoolParam(path string) (bool, error) {
 	enabled := false
-	line, err := os.ReadFile(path)
+	line, err := ioutil.ReadFile(path)
 	if err != nil {
 		return false, err
 	}
@@ -134,16 +132,16 @@ func getKernelBoolParam(path string) (bool, error) {
 	return enabled, err
 }
 
-// Sets the value of the kernel parameter located at the given path
+//Sets the value of the kernel parameter located at the given path
 func setKernelBoolParam(path string, on bool) error {
 	value := byte('0')
 	if on {
 		value = byte('1')
 	}
-	return os.WriteFile(path, []byte{value, '\n'}, 0644)
+	return ioutil.WriteFile(path, []byte{value, '\n'}, 0644)
 }
 
-// Checks to see if packet forwarding is enabled
+//Checks to see if packet forwarding is enabled
 func isPacketForwardingEnabled(ipVer ipVersion, iface string) (bool, error) {
 	switch ipVer {
 	case ipv4, ipv6:

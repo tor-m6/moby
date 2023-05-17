@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"strings"
 	"sync"
 
@@ -86,7 +87,7 @@ func (c *Config) NewInputPipes() {
 
 // NewNopInputPipe creates a new input pipe that will silently drop all messages in the input.
 func (c *Config) NewNopInputPipe() {
-	c.stdinPipe = ioutils.NopWriteCloser(io.Discard)
+	c.stdinPipe = ioutils.NopWriteCloser(ioutil.Discard)
 }
 
 // CloseStreams ensures that the configured streams are properly closed.

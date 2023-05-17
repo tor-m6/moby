@@ -1,6 +1,6 @@
 package cacheimport
 
-// Distributable build cache
+// Distibutable build cache
 //
 // Main manifest is OCI image index
 // https://github.com/opencontainers/image-spec/blob/master/image-index.md .
@@ -13,7 +13,7 @@ package cacheimport
 // Cache config file layout:
 //
 //{
-//  "layers": [                       <- layers contains references to blobs
+//  "layers": [
 //    {
 //      "blob": "sha256:deadbeef",    <- digest of layer blob in index
 //      "parent": -1                  <- index of parent layer, -1 if no parent
@@ -24,26 +24,20 @@ package cacheimport
 //    }
 //  ],
 //
-//  "records": [                       <- records contains chains of cache keys
+//  "records": [
 //    {
 //      "digest": "sha256:deadbeef",   <- base digest for the record
 //    },
 //    {
 //      "digest": "sha256:deadbeef",
 //      "output": 1,                   <- optional output index
-//      "layers": [                    <- optional array of layer pointers
+//      "layers": [                    <- optional array or layer chains
 //        {
 //          "createdat": "",
-//          "layer": 1,                <- index to the layers array, layer is loaded with all of its parents
+//          "layer": 1,                <- index to the layer
 //        }
 //      ],
-//      "chains": [                    <- optional array of layer pointer lists
-//        {
-//          "createdat": "",
-//          "layers": [1],             <- indexes to the layers array, all layers are loaded in specified order without parents
-//        }
-//      ],
-//      "inputs": [                    <- dependant records, this is how cache keys are linked together
+//      "inputs": [                    <- dependant records
 //        [                            <- index of the dependency (0)
 //          {
 //            "selector": "sel",       <- optional selector

@@ -72,17 +72,11 @@ type CachedResult interface {
 	CacheKeys() []ExportableCacheKey
 }
 
-type CachedResultWithProvenance interface {
-	CachedResult
-	WalkProvenance(context.Context, func(ProvenanceProvider) error) error
-}
-
 type ResultProxy interface {
-	ID() string
 	Result(context.Context) (CachedResult, error)
 	Release(context.Context) error
 	Definition() *pb.Definition
-	Provenance() interface{}
+	BuildSources() BuildSources
 }
 
 // CacheExportMode is the type for setting cache exporting modes
@@ -110,8 +104,6 @@ type CacheExportOpt struct {
 	// CompressionOpt is an option to specify the compression of the object to load.
 	// If specified, all objects that meet the option will be cached.
 	CompressionOpt *compression.Config
-	// ExportRoots defines if records for root vertexes should be exported.
-	ExportRoots bool
 }
 
 // CacheExporter can export the artifacts of the build chain
@@ -128,7 +120,7 @@ type CacheExporterTarget interface {
 
 // CacheExporterRecord is a single object being exported
 type CacheExporterRecord interface {
-	AddResult(vtx digest.Digest, index int, createdAt time.Time, result *Remote)
+	AddResult(createdAt time.Time, result *Remote)
 	LinkFrom(src CacheExporterRecord, index int, selector string)
 }
 
@@ -165,10 +157,6 @@ type Op interface {
 
 	// Acquire acquires the necessary resources to execute the `Op`.
 	Acquire(ctx context.Context) (release ReleaseFunc, err error)
-}
-
-type ProvenanceProvider interface {
-	IsProvenanceProvider()
 }
 
 type ResultBasedCacheFunc func(context.Context, Result, session.Group) (digest.Digest, error)
@@ -208,7 +196,14 @@ type CacheMap struct {
 	// such as oci descriptor content providers and progress writers to be passed to
 	// the cache. Opts should not have any impact on the computed cache key.
 	Opts CacheOpts
+
+	// BuildSources contains build dependencies that will be set from source
+	// operation.
+	BuildSources BuildSources
 }
+
+// BuildSources contains solved build dependencies.
+type BuildSources map[string]string
 
 // ExportableCacheKey is a cache key connected with an exporter that can export
 // a chain of cacherecords pointing to that key

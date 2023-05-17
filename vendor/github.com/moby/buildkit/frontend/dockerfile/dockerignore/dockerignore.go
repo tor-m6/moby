@@ -3,11 +3,10 @@ package dockerignore
 import (
 	"bufio"
 	"bytes"
+	"fmt"
 	"io"
 	"path/filepath"
 	"strings"
-
-	"github.com/pkg/errors"
 )
 
 // ReadAll reads a .dockerignore file and returns the list of file patterns
@@ -59,7 +58,7 @@ func ReadAll(reader io.Reader) ([]string, error) {
 		excludes = append(excludes, pattern)
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, errors.Wrap(err, "error reading .dockerignore")
+		return nil, fmt.Errorf("Error reading .dockerignore: %v", err)
 	}
 	return excludes, nil
 }

@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"github.com/docker/docker/mystrings"
 )
 
 // Version is used for versioning of the TarSum algorithm
@@ -69,7 +70,7 @@ func (tsv Version) String() string {
 
 // GetVersionFromTarsum returns the Version from the provided string.
 func GetVersionFromTarsum(tarsum string) (Version, error) {
-	versionName, _, _ := strings.Cut(tarsum, "+")
+	versionName, _, _ := mystrings.Cut(tarsum, "+")
 	version, ok := tarSumVersionsByName[versionName]
 	if !ok {
 		return -1, ErrNotVersion

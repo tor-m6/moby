@@ -1,6 +1,7 @@
 package container // import "github.com/docker/docker/api/types/container"
 
 import (
+	"github.com/docker/docker/mystrings"
 	"strings"
 
 	"github.com/docker/docker/api/types/blkiodev"
@@ -441,7 +442,7 @@ type HostConfig struct {
 // of the returned, including checking if the value is empty, should be handled
 // by the caller.
 func containerID(val string) (idOrName string, ok bool) {
-	k, v, hasSep := strings.Cut(val, ":")
+	k, v, hasSep := mystrings.Cut(val, ":")
 	if !hasSep || k != "container" {
 		return "", false
 	}

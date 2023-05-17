@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/docker/docker/libnetwork/discoverapi"
-	"github.com/docker/docker/libnetwork/ipamapi"
-	"github.com/docker/docker/libnetwork/types"
+	"github.com/docker/libnetwork/discoverapi"
+	"github.com/docker/libnetwork/ipamapi"
+	"github.com/docker/libnetwork/types"
 )
 
 var (
@@ -69,14 +69,7 @@ func (a *allocator) IsBuiltIn() bool {
 	return true
 }
 
-// Init registers the null ipam driver with ic.
-//
-// Deprecated: use [Register].
+// Init registers a remote ipam when its plugin is activated
 func Init(ic ipamapi.Callback, l, g interface{}) error {
-	return Register(ic)
-}
-
-// Register registers the null ipam driver with r.
-func Register(r ipamapi.Registerer) error {
-	return r.RegisterIpamDriver(ipamapi.NullIPAM, &allocator{})
+	return ic.RegisterIpamDriver(ipamapi.NullIPAM, &allocator{})
 }

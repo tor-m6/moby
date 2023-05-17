@@ -1,6 +1,6 @@
 package overlay
 
-//go:generate protoc -I.:../../Godeps/_workspace/src/github.com/gogo/protobuf  --gogo_out=import_path=github.com/docker/docker/libnetwork/drivers/overlay,Mgogoproto/gogo.proto=github.com/gogo/protobuf/gogoproto:. overlay.proto
+//go:generate protoc -I.:../../Godeps/_workspace/src/github.com/gogo/protobuf  --gogo_out=import_path=github.com/docker/libnetwork/drivers/overlay,Mgogoproto/gogo.proto=github.com/gogo/protobuf/gogoproto:. overlay.proto
 
 import (
 	"encoding/json"
@@ -8,16 +8,19 @@ import (
 	"sync"
 
 	"github.com/Microsoft/hcsshim"
-	"github.com/docker/docker/libnetwork/datastore"
-	"github.com/docker/docker/libnetwork/discoverapi"
-	"github.com/docker/docker/libnetwork/driverapi"
-	"github.com/docker/docker/libnetwork/netlabel"
-	"github.com/docker/docker/libnetwork/types"
-	"github.com/sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
+	"github.com/docker/libnetwork/datastore"
+	"github.com/docker/libnetwork/discoverapi"
+	"github.com/docker/libnetwork/driverapi"
+	"github.com/docker/libnetwork/netlabel"
+	"github.com/docker/libnetwork/types"
 )
 
 const (
-	networkType = "overlay"
+	networkType  = "overlay"
+	vethPrefix   = "veth"
+	vethLen      = 7
+	secureOption = "encrypted"
 )
 
 type driver struct {
@@ -30,8 +33,8 @@ type driver struct {
 	sync.Mutex
 }
 
-// Register registers a new instance of the overlay driver.
-func Register(r driverapi.Registerer, config map[string]interface{}) error {
+// Init registers a new instance of overlay driver
+func Init(dc driverapi.DriverCallback, config map[string]interface{}) error {
 	c := driverapi.Capability{
 		DataScope:         datastore.GlobalScope,
 		ConnectivityScope: datastore.GlobalScope,
@@ -68,7 +71,7 @@ func Register(r driverapi.Registerer, config map[string]interface{}) error {
 
 	d.restoreHNSNetworks()
 
-	return r.RegisterDriver(networkType, d, c)
+	return dc.RegisterDriver(networkType, d, c)
 }
 
 func (d *driver) restoreHNSNetworks() error {
@@ -101,7 +104,7 @@ func (d *driver) restoreHNSNetworks() error {
 func (d *driver) convertToOverlayNetwork(v *hcsshim.HNSNetwork) *network {
 	n := &network{
 		id:              v.Name,
-		hnsID:           v.Id,
+		hnsId:           v.Id,
 		driver:          d,
 		endpoints:       endpointTable{},
 		subnets:         []*subnet{},

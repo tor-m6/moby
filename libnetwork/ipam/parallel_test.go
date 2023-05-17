@@ -3,20 +3,13 @@ package ipam
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"net"
-	"sort"
 	"sync"
-	"sync/atomic"
 	"testing"
-	"time"
 
-	"github.com/docker/docker/libnetwork/ipamapi"
-	"github.com/docker/docker/libnetwork/ipamutils"
-	"golang.org/x/sync/errgroup"
+	"github.com/docker/libnetwork/ipamapi"
+	"github.com/stretchr/testify/assert"
 	"golang.org/x/sync/semaphore"
-	"gotest.tools/v3/assert"
-	is "gotest.tools/v3/assert/cmp"
 )
 
 const (
@@ -37,15 +30,23 @@ type testContext struct {
 }
 
 func newTestContext(t *testing.T, mask int, options map[string]string) *testContext {
-	a, err := NewAllocator(ipamutils.GetLocalScopeDefaultNetworks(), ipamutils.GetGlobalScopeDefaultNetworks())
+	a, err := getAllocator(true)
 	if err != nil {
 		t.Fatal(err)
 	}
+	a.addrSpaces["giallo"] = &addrSpace{
+		id:      dsConfigKey + "/" + "giallo",
+		ds:      a.addrSpaces[localAddressSpace].ds,
+		alloc:   a.addrSpaces[localAddressSpace].alloc,
+		scope:   a.addrSpaces[localAddressSpace].scope,
+		subnets: map[SubnetKey]*PoolData{},
+	}
+
 	network := fmt.Sprintf("192.168.100.0/%d", mask)
 	// total ips 2^(32-mask) - 2 (network and broadcast)
 	totalIps := 1<<uint(32-mask) - 2
 
-	pid, _, _, err := a.RequestPool(localAddressSpace, network, "", nil, false)
+	pid, _, _, err := a.RequestPool("giallo", network, "", nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,79 +65,6 @@ func TestDebug(t *testing.T) {
 	tctx := newTestContext(t, 23, map[string]string{ipamapi.AllocSerialPrefix: "true"})
 	tctx.a.RequestAddress(tctx.pid, nil, map[string]string{ipamapi.AllocSerialPrefix: "true"})
 	tctx.a.RequestAddress(tctx.pid, nil, map[string]string{ipamapi.AllocSerialPrefix: "true"})
-}
-
-type op struct {
-	id   int32
-	add  bool
-	name string
-}
-
-func (o *op) String() string {
-	return fmt.Sprintf("%+v", *o)
-}
-
-func TestRequestPoolParallel(t *testing.T) {
-	a, err := NewAllocator(ipamutils.GetLocalScopeDefaultNetworks(), ipamutils.GetGlobalScopeDefaultNetworks())
-	if err != nil {
-		t.Fatal(err)
-	}
-	var operationIndex int32
-	ch := make(chan *op, 240)
-
-	group := new(errgroup.Group)
-	defer func() {
-		if err := group.Wait(); err != nil {
-			t.Fatal(err)
-		}
-	}()
-
-	for i := 0; i < 120; i++ {
-		group.Go(func() error {
-			name, _, _, err := a.RequestPool("GlobalDefault", "", "", nil, false)
-			if err != nil {
-				t.Log(err) // log so we can see the error in real time rather than at the end when we actually call "Wait".
-				return fmt.Errorf("request error %v", err)
-			}
-			idx := atomic.AddInt32(&operationIndex, 1)
-			ch <- &op{idx, true, name}
-			time.Sleep(time.Duration(rand.Intn(100)) * time.Millisecond)
-			idx = atomic.AddInt32(&operationIndex, 1)
-			err = a.ReleasePool(name)
-			if err != nil {
-				t.Log(err) // log so we can see the error in real time rather than at the end when we actually call "Wait".
-				return fmt.Errorf("release error %v", err)
-			}
-			ch <- &op{idx, false, name}
-			return nil
-		})
-	}
-
-	// map of events
-	m := make(map[string][]*op)
-	for i := 0; i < 240; i++ {
-		x := <-ch
-		ops, ok := m[x.name]
-		if !ok {
-			ops = make([]*op, 0, 10)
-		}
-		ops = append(ops, x)
-		m[x.name] = ops
-	}
-
-	// Post processing to avoid event reordering on the channel
-	for pool, ops := range m {
-		sort.Slice(ops[:], func(i, j int) bool {
-			return ops[i].id < ops[j].id
-		})
-		expected := true
-		for _, op := range ops {
-			if op.add != expected {
-				t.Fatalf("Operations for %v not valid %v, operations %v", pool, op, ops)
-			}
-			expected = !expected
-		}
-	}
 }
 
 func TestFullAllocateRelease(t *testing.T) {
@@ -217,12 +145,16 @@ func allocate(t *testing.T, tctx *testContext, parallel int64) {
 		}
 		if there, ok := tctx.ipMap[ip.String()]; ok && there {
 			t.Fatalf("Got duplicate IP %s", ip.String())
+			break
 		}
 		tctx.ipList = append(tctx.ipList, ip)
 		tctx.ipMap[ip.String()] = true
 	}
 
-	assert.Assert(t, is.Len(tctx.ipList, tctx.maxIP))
+	assert.Len(t, tctx.ipList, tctx.maxIP)
+	if len(tctx.ipList) != tctx.maxIP {
+		t.Fatal("missmatch number allocation")
+	}
 }
 
 func release(t *testing.T, tctx *testContext, mode releaseMode, parallel int64) {
@@ -259,37 +191,36 @@ func release(t *testing.T, tctx *testContext, mode releaseMode, parallel int64) 
 	var id int
 	parallelExec := semaphore.NewWeighted(parallel)
 	ch := make(chan *net.IPNet, len(ipIndex))
-	group := new(errgroup.Group)
+	wg := sync.WaitGroup{}
 	for index := range ipIndex {
-		index := index
-		group.Go(func() error {
+		wg.Add(1)
+		go func(id, index int) {
 			parallelExec.Acquire(context.Background(), 1)
+			// logrus.Errorf("index %v", index)
+			// logrus.Errorf("list %v", tctx.ipList)
 			err := tctx.a.ReleaseAddress(tctx.pid, tctx.ipList[index].IP)
 			if err != nil {
-				return fmt.Errorf("routine %d got %v", id, err)
+				t.Fatalf("routine %d got %v", id, err)
 			}
 			ch <- tctx.ipList[index]
 			parallelExec.Release(1)
-			return nil
-		})
+			wg.Done()
+		}(id, index)
 		id++
 	}
-
-	if err := group.Wait(); err != nil {
-		t.Fatal(err)
-	}
+	wg.Wait()
 
 	for i := 0; i < len(ipIndex); i++ {
 		ip := <-ch
 
 		// check if it is really free
 		_, _, err := tctx.a.RequestAddress(tctx.pid, ip.IP, nil)
-		assert.Check(t, err, "ip %v not properly released", ip)
+		assert.NoError(t, err, "ip %v not properly released", ip)
 		if err != nil {
 			t.Fatalf("ip %v not properly released, error:%v", ip, err)
 		}
 		err = tctx.a.ReleaseAddress(tctx.pid, ip.IP)
-		assert.NilError(t, err)
+		assert.NoError(t, err)
 
 		if there, ok := tctx.ipMap[ip.String()]; !ok || !there {
 			t.Fatalf("ip %v got double deallocated", ip)
@@ -303,5 +234,5 @@ func release(t *testing.T, tctx *testContext, mode releaseMode, parallel int64) 
 		}
 	}
 
-	assert.Check(t, is.Len(tctx.ipList, tctx.maxIP-length))
+	assert.Len(t, tctx.ipList, tctx.maxIP-length)
 }

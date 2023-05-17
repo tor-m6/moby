@@ -7,12 +7,9 @@ import (
 	"net"
 	"strconv"
 	"strings"
-
-	"github.com/ishidawataru/sctp"
 )
 
 // constants for the IP address type
-// Deprecated: use the consts defined in github.com/docker/docker/libnetwork/resolvconf
 const (
 	IP = iota // IPv4 and IPv6
 	IPv4
@@ -69,6 +66,19 @@ func (t *TransportPort) String() string {
 	return fmt.Sprintf("%s/%d", t.Proto.String(), t.Port)
 }
 
+// FromString reads the TransportPort structure from string
+func (t *TransportPort) FromString(s string) error {
+	ps := strings.Split(s, "/")
+	if len(ps) == 2 {
+		t.Proto = ParseProtocol(ps[0])
+		if p, err := strconv.ParseUint(ps[1], 10, 16); err == nil {
+			t.Port = uint16(p)
+			return nil
+		}
+	}
+	return BadRequestErrorf("invalid format for transport port: %s", s)
+}
+
 // PortBinding represents a port binding between the container and the host
 type PortBinding struct {
 	Proto       Protocol
@@ -86,8 +96,6 @@ func (p PortBinding) HostAddr() (net.Addr, error) {
 		return &net.UDPAddr{IP: p.HostIP, Port: int(p.HostPort)}, nil
 	case TCP:
 		return &net.TCPAddr{IP: p.HostIP, Port: int(p.HostPort)}, nil
-	case SCTP:
-		return &sctp.SCTPAddr{IPAddrs: []net.IPAddr{{IP: p.HostIP}}, Port: int(p.HostPort)}, nil
 	default:
 		return nil, ErrInvalidProtocolBinding(p.Proto.String())
 	}
@@ -100,8 +108,6 @@ func (p PortBinding) ContainerAddr() (net.Addr, error) {
 		return &net.UDPAddr{IP: p.IP, Port: int(p.Port)}, nil
 	case TCP:
 		return &net.TCPAddr{IP: p.IP, Port: int(p.Port)}, nil
-	case SCTP:
-		return &sctp.SCTPAddr{IPAddrs: []net.IPAddr{{IP: p.IP}}, Port: int(p.Port)}, nil
 	default:
 		return nil, ErrInvalidProtocolBinding(p.Proto.String())
 	}
@@ -131,6 +137,48 @@ func (p *PortBinding) String() string {
 	}
 	ret = fmt.Sprintf("%s:%d", ret, p.HostPort)
 	return ret
+}
+
+// FromString reads the TransportPort structure from string
+func (p *PortBinding) FromString(s string) error {
+	ps := strings.Split(s, "/")
+	if len(ps) != 3 {
+		return BadRequestErrorf("invalid format for port binding: %s", s)
+	}
+
+	p.Proto = ParseProtocol(ps[0])
+
+	var err error
+	if p.IP, p.Port, err = parseIPPort(ps[1]); err != nil {
+		return BadRequestErrorf("failed to parse Container IP/Port in port binding: %s", err.Error())
+	}
+
+	if p.HostIP, p.HostPort, err = parseIPPort(ps[2]); err != nil {
+		return BadRequestErrorf("failed to parse Host IP/Port in port binding: %s", err.Error())
+	}
+
+	return nil
+}
+
+func parseIPPort(s string) (net.IP, uint16, error) {
+	pp := strings.Split(s, ":")
+	if len(pp) != 2 {
+		return nil, 0, BadRequestErrorf("invalid format: %s", s)
+	}
+
+	var ip net.IP
+	if pp[0] != "" {
+		if ip = net.ParseIP(pp[0]); ip == nil {
+			return nil, 0, BadRequestErrorf("invalid ip: %s", pp[0])
+		}
+	}
+
+	port, err := strconv.ParseUint(pp[1], 10, 16)
+	if err != nil {
+		return nil, 0, BadRequestErrorf("invalid port: %s", pp[1])
+	}
+
+	return ip, uint16(port), nil
 }
 
 // Equal checks if this instance of PortBinding is equal to the passed one
@@ -185,8 +233,6 @@ const (
 	TCP = 6
 	// UDP is for the UDP ip protocol
 	UDP = 17
-	// SCTP is for the SCTP ip protocol
-	SCTP = 132
 )
 
 // Protocol represents an IP protocol number
@@ -200,10 +246,8 @@ func (p Protocol) String() string {
 		return "tcp"
 	case UDP:
 		return "udp"
-	case SCTP:
-		return "sctp"
 	default:
-		return strconv.Itoa(int(p))
+		return fmt.Sprintf("%d", p)
 	}
 }
 
@@ -216,8 +260,6 @@ func ParseProtocol(s string) Protocol {
 		return UDP
 	case "tcp":
 		return TCP
-	case "sctp":
-		return SCTP
 	default:
 		return 0
 	}
@@ -275,13 +317,26 @@ func CompareIPNet(a, b *net.IPNet) bool {
 }
 
 // GetMinimalIP returns the address in its shortest form
-// If ip contains an IPv4-mapped IPv6 address, the 4-octet form of the IPv4 address will be returned.
-// Otherwise ip is returned unchanged.
 func GetMinimalIP(ip net.IP) net.IP {
 	if ip != nil && ip.To4() != nil {
 		return ip.To4()
 	}
 	return ip
+}
+
+// GetMinimalIPNet returns a copy of the passed IP Network with congruent ip and mask notation
+func GetMinimalIPNet(nw *net.IPNet) *net.IPNet {
+	if nw == nil {
+		return nil
+	}
+	if len(nw.IP) == 16 && nw.IP.To4() != nil {
+		m := nw.Mask
+		if len(m) == 16 {
+			m = m[12:16]
+		}
+		return &net.IPNet{IP: nw.IP.To4(), Mask: m}
+	}
+	return nw
 }
 
 // IsIPNetValid returns true if the ipnet is a valid network/mask
@@ -519,6 +574,8 @@ func (br badRequest) Error() string {
 }
 func (br badRequest) BadRequest() {}
 
+type maskBadRequest string
+
 type notFound string
 
 func (nf notFound) Error() string {
@@ -539,6 +596,8 @@ func (ns noService) Error() string {
 	return string(ns)
 }
 func (ns noService) NoService() {}
+
+type maskNoService string
 
 type timeout string
 

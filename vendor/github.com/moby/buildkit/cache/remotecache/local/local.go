@@ -111,15 +111,11 @@ func (p *unlazyProvider) UnlazySession(desc ocispecs.Descriptor) session.Group {
 }
 
 func attrsToCompression(attrs map[string]string) (*compression.Config, error) {
-	var compressionType compression.Type
+	compressionType := compression.Default
 	if v, ok := attrs[attrLayerCompression]; ok {
-		c, err := compression.Parse(v)
-		if err != nil {
-			return nil, err
+		if c := compression.Parse(v); c != compression.UnknownCompression {
+			compressionType = c
 		}
-		compressionType = c
-	} else {
-		compressionType = compression.Default
 	}
 	compressionConfig := compression.New(compressionType)
 	if v, ok := attrs[attrForceCompression]; ok {

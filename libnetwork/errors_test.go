@@ -3,10 +3,11 @@ package libnetwork
 import (
 	"testing"
 
-	"github.com/docker/docker/libnetwork/types"
+	"github.com/docker/libnetwork/types"
 )
 
 func TestErrorInterfaces(t *testing.T) {
+
 	badRequestErrorList := []error{ErrInvalidID(""), ErrInvalidName(""), ErrInvalidJoin{}, ErrInvalidNetworkDriver(""), InvalidContainerIDError(""), ErrNoSuchNetwork(""), ErrNoSuchEndpoint("")}
 	for _, err := range badRequestErrorList {
 		switch u := err.(type) {
@@ -46,4 +47,5 @@ func TestErrorInterfaces(t *testing.T) {
 			t.Fatalf("Failed to detect err %v is of type ForbiddenError. Got type: %T", err, u)
 		}
 	}
+
 }

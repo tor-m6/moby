@@ -6,6 +6,7 @@ package pidfile // import "github.com/docker/docker/pkg/pidfile"
 import (
 	"bytes"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"strconv"
 
@@ -18,7 +19,7 @@ import (
 // is ignored. Consumers should therefore check if the returned PID is a non-zero
 // value before use.
 func Read(path string) (pid int, err error) {
-	pidByte, err := os.ReadFile(path)
+	pidByte, err := ioutil.ReadFile(path)
 	if err != nil {
 		return 0, err
 	}
@@ -48,5 +49,5 @@ func Write(path string, pid int) error {
 	if oldPID != 0 {
 		return fmt.Errorf("process with PID %d is still running", oldPID)
 	}
-	return os.WriteFile(path, []byte(strconv.Itoa(pid)), 0o644)
+	return ioutil.WriteFile(path, []byte(strconv.Itoa(pid)), 0o644)
 }

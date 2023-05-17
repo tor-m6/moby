@@ -1,13 +1,10 @@
-//go:build linux
-// +build linux
-
 package bridge
 
 import (
 	"net"
 	"testing"
 
-	"github.com/docker/docker/libnetwork/testutils"
+	"github.com/docker/libnetwork/testutils"
 	"github.com/vishvananda/netlink"
 )
 
@@ -34,7 +31,7 @@ func TestSetupBridgeIPv4Fixed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer nh.Close()
+	defer nh.Delete()
 
 	config, br := setupTestInterface(t, nh)
 	config.AddressIPv4 = &net.IPNet{IP: ip, Mask: netw.Mask}
@@ -67,7 +64,7 @@ func TestSetupGatewayIPv4(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer nh.Close()
+	defer nh.Delete()
 
 	ip, nw, _ := net.ParseCIDR("192.168.0.24/16")
 	nw.IP = ip

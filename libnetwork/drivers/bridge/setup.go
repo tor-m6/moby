@@ -1,6 +1,3 @@
-//go:build linux
-// +build linux
-
 package bridge
 
 type setupStep func(*networkConfiguration, *bridgeInterface) error

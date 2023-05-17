@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"github.com/docker/docker/mystrings"
 )
 
 type settable struct {
@@ -92,7 +93,7 @@ func (set *settable) isSettable(allowedSettableFields []string, settable []strin
 
 func updateSettingsEnv(env *[]string, set *settable) {
 	for i, e := range *env {
-		if name, _, _ := strings.Cut(e, "="); name == set.name {
+		if name, _, _ := mystrings.Cut(e, "="); name == set.name {
 			(*env)[i] = set.name + "=" + set.value
 			return
 		}

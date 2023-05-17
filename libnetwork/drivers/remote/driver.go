@@ -1,18 +1,17 @@
 package remote
 
 import (
+	"errors"
 	"fmt"
 	"net"
 
-	"github.com/docker/docker/libnetwork/datastore"
-	"github.com/docker/docker/libnetwork/discoverapi"
-	"github.com/docker/docker/libnetwork/driverapi"
-	"github.com/docker/docker/libnetwork/drivers/remote/api"
-	"github.com/docker/docker/libnetwork/types"
-	"github.com/docker/docker/pkg/plugingetter"
+	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/pkg/plugins"
-	"github.com/pkg/errors"
-	"github.com/sirupsen/logrus"
+	"github.com/docker/libnetwork/datastore"
+	"github.com/docker/libnetwork/discoverapi"
+	"github.com/docker/libnetwork/driverapi"
+	"github.com/docker/libnetwork/drivers/remote/api"
+	"github.com/docker/libnetwork/types"
 )
 
 type driver struct {
@@ -30,15 +29,7 @@ func newDriver(name string, client *plugins.Client) driverapi.Driver {
 
 // Init makes sure a remote driver is registered when a network driver
 // plugin is activated.
-//
-// Deprecated: use [Register].
 func Init(dc driverapi.DriverCallback, config map[string]interface{}) error {
-	return Register(dc, dc.GetPluginGetter())
-}
-
-// Register makes sure a remote driver is registered with r when a network
-// driver plugin is activated.
-func Register(r driverapi.Registerer, pg plugingetter.PluginGetter) error {
 	newPluginHandler := func(name string, client *plugins.Client) {
 		// negotiate driver capability with client
 		d := newDriver(name, client)
@@ -47,49 +38,23 @@ func Register(r driverapi.Registerer, pg plugingetter.PluginGetter) error {
 			logrus.Errorf("error getting capability for %s due to %v", name, err)
 			return
 		}
-		if err = r.RegisterDriver(name, d, *c); err != nil {
+		if err = dc.RegisterDriver(name, d, *c); err != nil {
 			logrus.Errorf("error registering driver for %s due to %v", name, err)
 		}
 	}
 
 	// Unit test code is unaware of a true PluginStore. So we fall back to v1 plugins.
 	handleFunc := plugins.Handle
-	if pg != nil {
+	if pg := dc.GetPluginGetter(); pg != nil {
 		handleFunc = pg.Handle
 		activePlugins := pg.GetAllManagedPluginsByCap(driverapi.NetworkPluginEndpointType)
 		for _, ap := range activePlugins {
-			client, err := getPluginClient(ap)
-			if err != nil {
-				return err
-			}
-			newPluginHandler(ap.Name(), client)
+			newPluginHandler(ap.Name(), ap.Client())
 		}
 	}
 	handleFunc(driverapi.NetworkPluginEndpointType, newPluginHandler)
 
 	return nil
-}
-
-func getPluginClient(p plugingetter.CompatPlugin) (*plugins.Client, error) {
-	if v1, ok := p.(plugingetter.PluginWithV1Client); ok {
-		return v1.Client(), nil
-	}
-
-	pa, ok := p.(plugingetter.PluginAddr)
-	if !ok {
-		return nil, errors.Errorf("unknown plugin type %T", p)
-	}
-
-	if pa.Protocol() != plugins.ProtocolSchemeHTTPV1 {
-		return nil, errors.Errorf("unsupported plugin protocol %s", pa.Protocol())
-	}
-
-	addr := pa.Addr()
-	client, err := plugins.NewClientWithTimeout(addr.Network()+"://"+addr.String(), nil, pa.Timeout())
-	if err != nil {
-		return nil, errors.Wrap(err, "error creating plugin client")
-	}
-	return client, nil
 }
 
 // Get capability from client

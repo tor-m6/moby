@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path"
+	"io/ioutil"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -521,7 +522,7 @@ func (c *copier) copyDirectory(
 		c.parentDirs = c.parentDirs[:len(c.parentDirs)-1]
 	}()
 
-	fis, err := os.ReadDir(src)
+	fis, err := ioutil.ReadDir(src)
 	if err != nil {
 		return false, errors.Wrapf(err, "failed to read %s", src)
 	}

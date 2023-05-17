@@ -3,6 +3,7 @@ package containerdexecutor
 import (
 	"context"
 	"io"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sync"
@@ -43,19 +44,6 @@ type containerdExecutor struct {
 	selinux          bool
 	traceSocket      string
 	rootless         bool
-}
-
-// OnCreateRuntimer provides an alternative to OCI hooks for applying network
-// configuration to a container. If the [network.Provider] returns a
-// [network.Namespace] which also implements this interface, the containerd
-// executor will run the callback at the appropriate point in the container
-// lifecycle.
-type OnCreateRuntimer interface {
-	// OnCreateRuntime is analogous to the createRuntime OCI hook. The
-	// function is called after the container is created, before the user
-	// process has been executed. The argument is the container PID in the
-	// runtime namespace.
-	OnCreateRuntime(pid uint32) error
 }
 
 // New creates a new executor backed by connection to containerd API
@@ -135,7 +123,7 @@ func (w *containerdExecutor) Run(ctx context.Context, id string, root executor.M
 		return err
 	}
 	defer lm.Unmount()
-	defer executor.MountStubsCleaner(rootfsPath, mounts, meta.RemoveMountStubsRecursive)()
+	defer executor.MountStubsCleaner(rootfsPath, mounts)()
 
 	uid, gid, sgids, err := oci.GetUser(rootfsPath, meta.User)
 	if err != nil {
@@ -161,7 +149,7 @@ func (w *containerdExecutor) Run(ctx context.Context, id string, root executor.M
 	if !ok {
 		return errors.Errorf("unknown network mode %s", meta.NetMode)
 	}
-	namespace, err := provider.New(ctx, meta.Hostname)
+	namespace, err := provider.New()
 	if err != nil {
 		return err
 	}
@@ -218,16 +206,10 @@ func (w *containerdExecutor) Run(ctx context.Context, id string, root executor.M
 	}
 
 	defer func() {
-		if _, err1 := task.Delete(context.TODO(), containerd.WithProcessKill); err == nil && err1 != nil {
+		if _, err1 := task.Delete(context.TODO()); err == nil && err1 != nil {
 			err = errors.Wrapf(err1, "failed to delete task %s", id)
 		}
 	}()
-
-	if nn, ok := namespace.(OnCreateRuntimer); ok {
-		if err := nn.OnCreateRuntime(task.Pid()); err != nil {
-			return err
-		}
-	}
 
 	trace.SpanFromContext(ctx).AddEvent("Container created")
 	err = w.runProcess(ctx, task, process.Resize, process.Signal, func() {
@@ -335,10 +317,10 @@ func fixProcessOutput(process *executor.ProcessInfo) {
 	// failed to start io pipe copy: unable to copy pipes: containerd-shim: opening file "" failed: open : no such file or directory: unknown
 	// So just stub out any missing output
 	if process.Stdout == nil {
-		process.Stdout = &nopCloser{io.Discard}
+		process.Stdout = &nopCloser{ioutil.Discard}
 	}
 	if process.Stderr == nil {
-		process.Stderr = &nopCloser{io.Discard}
+		process.Stderr = &nopCloser{ioutil.Discard}
 	}
 }
 

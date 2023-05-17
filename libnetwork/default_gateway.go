@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/docker/docker/libnetwork/netlabel"
-	"github.com/docker/docker/libnetwork/types"
-	"github.com/sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
+	"github.com/docker/libnetwork/netlabel"
+	"github.com/docker/libnetwork/types"
 )
 
 const (
@@ -29,7 +29,8 @@ var procGwNetwork = make(chan (bool), 1)
    - its deleted when an endpoint with GW joins the container
 */
 
-func (sb *Sandbox) setupDefaultGW() error {
+func (sb *sandbox) setupDefaultGW() error {
+
 	// check if the container already has a GW endpoint
 	if ep := sb.getEndpointInGWNetwork(); ep != nil {
 		return nil
@@ -48,11 +49,9 @@ func (sb *Sandbox) setupDefaultGW() error {
 
 	createOptions := []EndpointOption{CreateOptionAnonymous()}
 
-	var gwName string
-	if len(sb.containerID) <= gwEPlen {
-		gwName = "gateway_" + sb.containerID
-	} else {
-		gwName = "gateway_" + sb.id[:gwEPlen]
+	eplen := gwEPlen
+	if len(sb.containerID) < gwEPlen {
+		eplen = len(sb.containerID)
 	}
 
 	sbLabels := sb.Labels()
@@ -70,7 +69,7 @@ func (sb *Sandbox) setupDefaultGW() error {
 		createOptions = append(createOptions, epOption)
 	}
 
-	newEp, err := n.CreateEndpoint(gwName, createOptions...)
+	newEp, err := n.CreateEndpoint("gateway_"+sb.containerID[0:eplen], createOptions...)
 	if err != nil {
 		return fmt.Errorf("container %s: endpoint create on GW Network failed: %v", sb.containerID, err)
 	}
@@ -84,7 +83,9 @@ func (sb *Sandbox) setupDefaultGW() error {
 		}
 	}()
 
-	if err = newEp.sbJoin(sb); err != nil {
+	epLocal := newEp.(*endpoint)
+
+	if err = epLocal.sbJoin(sb); err != nil {
 		return fmt.Errorf("container %s: endpoint join on GW Network failed: %v", sb.containerID, err)
 	}
 
@@ -92,8 +93,8 @@ func (sb *Sandbox) setupDefaultGW() error {
 }
 
 // If present, detach and remove the endpoint connecting the sandbox to the default gw network.
-func (sb *Sandbox) clearDefaultGW() error {
-	var ep *Endpoint
+func (sb *sandbox) clearDefaultGW() error {
+	var ep *endpoint
 
 	if ep = sb.getEndpointInGWNetwork(); ep == nil {
 		return nil
@@ -111,10 +112,10 @@ func (sb *Sandbox) clearDefaultGW() error {
 // on the endpoints to which it is connected. It does not account
 // for the default gateway network endpoint.
 
-func (sb *Sandbox) needDefaultGW() bool {
+func (sb *sandbox) needDefaultGW() bool {
 	var needGW bool
 
-	for _, ep := range sb.Endpoints() {
+	for _, ep := range sb.getConnectedEndpoints() {
 		if ep.endpointInGWNetwork() {
 			continue
 		}
@@ -143,8 +144,8 @@ func (sb *Sandbox) needDefaultGW() bool {
 	return needGW
 }
 
-func (sb *Sandbox) getEndpointInGWNetwork() *Endpoint {
-	for _, ep := range sb.Endpoints() {
+func (sb *sandbox) getEndpointInGWNetwork() *endpoint {
+	for _, ep := range sb.getConnectedEndpoints() {
 		if ep.getNetwork().name == libnGWNetwork && strings.HasPrefix(ep.Name(), "gateway_") {
 			return ep
 		}
@@ -152,16 +153,28 @@ func (sb *Sandbox) getEndpointInGWNetwork() *Endpoint {
 	return nil
 }
 
-func (ep *Endpoint) endpointInGWNetwork() bool {
+func (ep *endpoint) endpointInGWNetwork() bool {
 	if ep.getNetwork().name == libnGWNetwork && strings.HasPrefix(ep.Name(), "gateway_") {
 		return true
 	}
 	return false
 }
 
+func (sb *sandbox) getEPwithoutGateway() *endpoint {
+	for _, ep := range sb.getConnectedEndpoints() {
+		if ep.getNetwork().Type() == "null" || ep.getNetwork().Type() == "host" {
+			continue
+		}
+		if len(ep.Gateway()) == 0 {
+			return ep
+		}
+	}
+	return nil
+}
+
 // Looks for the default gw network and creates it if not there.
 // Parallel executions are serialized.
-func (c *Controller) defaultGwNetwork() (Network, error) {
+func (c *controller) defaultGwNetwork() (Network, error) {
 	procGwNetwork <- true
 	defer func() { <-procGwNetwork }()
 
@@ -173,8 +186,8 @@ func (c *Controller) defaultGwNetwork() (Network, error) {
 }
 
 // Returns the endpoint which is providing external connectivity to the sandbox
-func (sb *Sandbox) getGatewayEndpoint() *Endpoint {
-	for _, ep := range sb.Endpoints() {
+func (sb *sandbox) getGatewayEndpoint() *endpoint {
+	for _, ep := range sb.getConnectedEndpoints() {
 		if ep.getNetwork().Type() == "null" || ep.getNetwork().Type() == "host" {
 			continue
 		}

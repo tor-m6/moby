@@ -2,23 +2,23 @@ package bitseq
 
 import (
 	"encoding/json"
+	"fmt"
 
-	"github.com/docker/docker/libnetwork/bitmap"
-	"github.com/docker/docker/libnetwork/datastore"
-	"github.com/docker/docker/libnetwork/types"
+	"github.com/docker/libnetwork/datastore"
+	"github.com/docker/libnetwork/types"
 )
 
 // Key provides the Key to be used in KV Store
 func (h *Handle) Key() []string {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.Lock()
+	defer h.Unlock()
 	return []string{h.app, h.id}
 }
 
 // KeyPrefix returns the immediate parent key that can be used for tree walk
 func (h *Handle) KeyPrefix() []string {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.Lock()
+	defer h.Unlock()
 	return []string{h.app}
 }
 
@@ -38,30 +38,30 @@ func (h *Handle) SetValue(value []byte) error {
 
 // Index returns the latest DB Index as seen by this object
 func (h *Handle) Index() uint64 {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.Lock()
+	defer h.Unlock()
 	return h.dbIndex
 }
 
 // SetIndex method allows the datastore to store the latest DB Index into this object
 func (h *Handle) SetIndex(index uint64) {
-	h.mu.Lock()
+	h.Lock()
 	h.dbIndex = index
 	h.dbExists = true
-	h.mu.Unlock()
+	h.Unlock()
 }
 
 // Exists method is true if this object has been stored in the DB.
 func (h *Handle) Exists() bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.Lock()
+	defer h.Unlock()
 	return h.dbExists
 }
 
 // New method returns a handle based on the receiver handle
 func (h *Handle) New() datastore.KVObject {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.Lock()
+	defer h.Unlock()
 
 	return &Handle{
 		app:   h.app,
@@ -71,21 +71,24 @@ func (h *Handle) New() datastore.KVObject {
 
 // CopyTo deep copies the handle into the passed destination object
 func (h *Handle) CopyTo(o datastore.KVObject) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.Lock()
+	defer h.Unlock()
 
 	dstH := o.(*Handle)
 	if h == dstH {
 		return nil
 	}
-	dstH.mu.Lock()
-	defer dstH.mu.Unlock()
-	dstH.bm = bitmap.Copy(h.bm)
+	dstH.Lock()
+	dstH.bits = h.bits
+	dstH.unselected = h.unselected
+	dstH.head = h.head.getCopy()
 	dstH.app = h.app
 	dstH.id = h.id
 	dstH.dbIndex = h.dbIndex
 	dstH.dbExists = h.dbExists
 	dstH.store = h.store
+	dstH.curr = h.curr
+	dstH.Unlock()
 
 	return nil
 }
@@ -97,16 +100,27 @@ func (h *Handle) Skip() bool {
 
 // DataScope method returns the storage scope of the datastore
 func (h *Handle) DataScope() string {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.Lock()
+	defer h.Unlock()
 
 	return h.store.Scope()
 }
 
+func (h *Handle) fromDsValue(value []byte) error {
+	var ba []byte
+	if err := json.Unmarshal(value, &ba); err != nil {
+		return fmt.Errorf("failed to decode json: %s", err.Error())
+	}
+	if err := h.FromByteArray(ba); err != nil {
+		return fmt.Errorf("failed to decode handle: %s", err.Error())
+	}
+	return nil
+}
+
 func (h *Handle) writeToStore() error {
-	h.mu.Lock()
+	h.Lock()
 	store := h.store
-	h.mu.Unlock()
+	h.Unlock()
 	if store == nil {
 		return nil
 	}
@@ -118,9 +132,9 @@ func (h *Handle) writeToStore() error {
 }
 
 func (h *Handle) deleteFromStore() error {
-	h.mu.Lock()
+	h.Lock()
 	store := h.store
-	h.mu.Unlock()
+	h.Unlock()
 	if store == nil {
 		return nil
 	}

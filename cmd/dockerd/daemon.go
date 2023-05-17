@@ -35,7 +35,7 @@ import (
 	"github.com/docker/docker/cli/debug"
 	"github.com/docker/docker/cmd/dockerd/trap"
 	"github.com/docker/docker/daemon"
-	"github.com/docker/docker/daemon/cluster"
+	// "github.com/docker/docker/daemon/cluster"
 	"github.com/docker/docker/daemon/config"
 	"github.com/docker/docker/daemon/listeners"
 	"github.com/docker/docker/dockerversion"
@@ -53,7 +53,7 @@ import (
 	"github.com/docker/docker/runconfig"
 	"github.com/docker/go-connections/tlsconfig"
 	"github.com/moby/buildkit/session"
-	swarmapi "github.com/moby/swarmkit/v2/api"
+	// swarmapi "github.com/moby/swarmkit/v2/api"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/pflag"
@@ -272,7 +272,7 @@ type routerOptions struct {
 	buildkit       *buildkit.Builder
 	daemon         *daemon.Daemon
 	api            *apiserver.Server
-	cluster        *cluster.Cluster
+	// cluster        *cluster.Cluster
 }
 
 func newRouterOptions(ctx context.Context, config *config.Config, d *daemon.Daemon) (routerOptions, error) {
@@ -717,35 +717,35 @@ func loadListeners(cli *DaemonCli, tlsConfig *tls.Config) ([]string, error) {
 	return hosts, nil
 }
 
-func createAndStartCluster(cli *DaemonCli, d *daemon.Daemon) (*cluster.Cluster, error) {
-	name, _ := os.Hostname()
+// func createAndStartCluster(cli *DaemonCli, d *daemon.Daemon) (*cluster.Cluster, error) {
+	// name, _ := os.Hostname()
 
-	// Use a buffered channel to pass changes from store watch API to daemon
-	// A buffer allows store watch API and daemon processing to not wait for each other
-	watchStream := make(chan *swarmapi.WatchMessage, 32)
+	// // Use a buffered channel to pass changes from store watch API to daemon
+	// // A buffer allows store watch API and daemon processing to not wait for each other
+	// watchStream := make(chan *swarmapi.WatchMessage, 32)
 
-	c, err := cluster.New(cluster.Config{
-		Root:                   cli.Config.Root,
-		Name:                   name,
-		Backend:                d,
-		VolumeBackend:          d.VolumesService(),
-		ImageBackend:           d.ImageService(),
-		PluginBackend:          d.PluginManager(),
-		NetworkSubnetsProvider: d,
-		DefaultAdvertiseAddr:   cli.Config.SwarmDefaultAdvertiseAddr,
-		RaftHeartbeatTick:      cli.Config.SwarmRaftHeartbeatTick,
-		RaftElectionTick:       cli.Config.SwarmRaftElectionTick,
-		RuntimeRoot:            cli.getSwarmRunRoot(),
-		WatchStream:            watchStream,
-	})
-	if err != nil {
-		return nil, err
-	}
-	d.SetCluster(c)
-	err = c.Start()
+	// c, err := cluster.New(cluster.Config{
+	// 	Root:                   cli.Config.Root,
+	// 	Name:                   name,
+	// 	Backend:                d,
+	// 	VolumeBackend:          d.VolumesService(),
+	// 	ImageBackend:           d.ImageService(),
+	// 	PluginBackend:          d.PluginManager(),
+	// 	NetworkSubnetsProvider: d,
+	// 	DefaultAdvertiseAddr:   cli.Config.SwarmDefaultAdvertiseAddr,
+	// 	RaftHeartbeatTick:      cli.Config.SwarmRaftHeartbeatTick,
+	// 	RaftElectionTick:       cli.Config.SwarmRaftElectionTick,
+	// 	RuntimeRoot:            cli.getSwarmRunRoot(),
+	// 	WatchStream:            watchStream,
+	// })
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// d.SetCluster(c)
+	// err = c.Start()
 
-	return c, err
-}
+	// return c, err
+// }
 
 // validates that the plugins requested with the --authorization-plugin flag are valid AuthzDriver
 // plugins present on the host and available to the daemon

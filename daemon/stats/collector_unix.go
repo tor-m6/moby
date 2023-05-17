@@ -1,5 +1,5 @@
-//go:build !windows
-// +build !windows
+//go:build !windows && !inno
+// +build !windows !inno
 
 package stats // import "github.com/docker/docker/daemon/stats"
 

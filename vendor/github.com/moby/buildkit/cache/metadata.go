@@ -252,8 +252,6 @@ func (md *cacheMetadata) queueMediaType(str string) error {
 
 func (md *cacheMetadata) getSnapshotID() string {
 	sid := md.GetString(keySnapshot)
-	// Note that historic buildkit releases did not always set the snapshot ID.
-	// Fallback to record ID is needed for old build cache compatibility.
 	if sid == "" {
 		return md.ID()
 	}
@@ -557,7 +555,9 @@ func (md *cacheMetadata) appendStringSlice(key string, values ...string) error {
 		}
 
 		for _, existing := range slice {
-			delete(idx, existing)
+			if _, ok := idx[existing]; ok {
+				delete(idx, existing)
+			}
 		}
 
 		if len(idx) == 0 {

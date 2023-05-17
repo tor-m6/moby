@@ -192,13 +192,12 @@ func (e *ExecOp) Marshal(ctx context.Context, c *Constraints) (digest.Digest, []
 	}
 
 	meta := &pb.Meta{
-		Args:                      args,
-		Env:                       env.ToArray(),
-		Cwd:                       cwd,
-		User:                      user,
-		Hostname:                  hostname,
-		CgroupParent:              cgrpParent,
-		RemoveMountStubsRecursive: true,
+		Args:         args,
+		Env:          env.ToArray(),
+		Cwd:          cwd,
+		User:         user,
+		Hostname:     hostname,
+		CgroupParent: cgrpParent,
 	}
 
 	extraHosts, err := getExtraHosts(e.base)(ctx, c)

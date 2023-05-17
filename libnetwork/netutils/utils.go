@@ -11,7 +11,7 @@ import (
 	"net"
 	"strings"
 
-	"github.com/docker/docker/libnetwork/types"
+	"github.com/docker/libnetwork/types"
 )
 
 var (
@@ -19,6 +19,8 @@ var (
 	ErrNetworkOverlapsWithNameservers = errors.New("requested network overlaps with nameserver")
 	// ErrNetworkOverlaps preformatted error
 	ErrNetworkOverlaps = errors.New("requested network overlaps with existing network")
+	// ErrNoDefaultRoute preformatted error
+	ErrNoDefaultRoute = errors.New("no default route")
 )
 
 // CheckNameserverOverlaps checks whether the passed network overlaps with any of the nameservers
@@ -72,7 +74,8 @@ func GetIfaceAddr(name string) (net.Addr, []net.Addr, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	var addrs4, addrs6 []net.Addr
+	var addrs4 []net.Addr
+	var addrs6 []net.Addr
 	for _, addr := range addrs {
 		ip := (addr.(*net.IPNet)).IP
 		if ip4 := ip.To4(); ip4 != nil {
@@ -83,7 +86,7 @@ func GetIfaceAddr(name string) (net.Addr, []net.Addr, error) {
 	}
 	switch {
 	case len(addrs4) == 0:
-		return nil, nil, fmt.Errorf("interface %v has no IPv4 addresses", name)
+		return nil, nil, fmt.Errorf("Interface %v has no IPv4 addresses", name)
 	case len(addrs4) > 1:
 		fmt.Printf("Interface %v has more than 1 IPv4 address. Defaulting to using %v\n",
 			name, (addrs4[0].(*net.IPNet)).IP)
@@ -121,21 +124,14 @@ func GenerateMACFromIP(ip net.IP) net.HardwareAddr {
 	return genMAC(ip)
 }
 
-// GenerateRandomName returns a string of the specified length, created by joining the prefix to random hex characters.
-// The length must be strictly larger than len(prefix), or an error will be returned.
-func GenerateRandomName(prefix string, length int) (string, error) {
-	if length <= len(prefix) {
-		return "", fmt.Errorf("invalid length %d for prefix %s", length, prefix)
-	}
-
-	// We add 1 here as integer division will round down, and we want to round up.
-	b := make([]byte, (length-len(prefix)+1)/2)
-	if _, err := io.ReadFull(rand.Reader, b); err != nil {
+// GenerateRandomName returns a new name joined with a prefix.  This size
+// specified is used to truncate the randomly generated value
+func GenerateRandomName(prefix string, size int) (string, error) {
+	id := make([]byte, 32)
+	if _, err := io.ReadFull(rand.Reader, id); err != nil {
 		return "", err
 	}
-
-	// By taking a slice here, we ensure that the string is always the correct length.
-	return (prefix + hex.EncodeToString(b))[:length], nil
+	return prefix + hex.EncodeToString(id)[:size], nil
 }
 
 // ReverseIP accepts a V4 or V6 IP string in the canonical form and returns a reversed IP in
@@ -179,9 +175,9 @@ func ParseAlias(val string) (string, string, error) {
 	if val == "" {
 		return "", "", errors.New("empty string specified for alias")
 	}
-	arr := strings.SplitN(val, ":", 3)
+	arr := strings.Split(val, ":")
 	if len(arr) > 2 {
-		return "", "", errors.New("bad format for alias: " + val)
+		return "", "", fmt.Errorf("bad format for alias: %s", val)
 	}
 	if len(arr) == 1 {
 		return val, val, nil

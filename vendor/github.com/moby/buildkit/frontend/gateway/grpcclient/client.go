@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"os"
 	"strings"
@@ -115,7 +116,7 @@ func (c *grpcClient) Run(ctx context.Context, f client.BuildFunc) (retError erro
 			req := &pb.ReturnRequest{}
 			if retError == nil {
 				if res == nil {
-					res = client.NewResult()
+					res = &client.Result{}
 				}
 				pbRes := &pb.Result{
 					Metadata: res.Metadata,
@@ -160,31 +161,6 @@ func (c *grpcClient) Run(ctx context.Context, f client.BuildFunc) (retError erro
 						}
 					}
 				}
-
-				if res.Attestations != nil {
-					attestations := map[string]*pb.Attestations{}
-					for k, as := range res.Attestations {
-						for _, a := range as {
-							pbAtt, err := client.AttestationToPB(&a)
-							if err != nil {
-								retError = err
-								continue
-							}
-							pbRef, err := convertRef(a.Ref)
-							if err != nil {
-								retError = err
-								continue
-							}
-							pbAtt.Ref = pbRef
-							if attestations[k] == nil {
-								attestations[k] = &pb.Attestations{}
-							}
-							attestations[k].Attestation = append(attestations[k].Attestation, pbAtt)
-						}
-					}
-					pbRes.Attestations = attestations
-				}
-
 				if retError == nil {
 					req.Result = pbRes
 				}
@@ -348,12 +324,22 @@ func (c *grpcClient) Solve(ctx context.Context, creq client.SolveRequest) (res *
 			}
 		}
 	}
-	var cacheImports []*pb.CacheOptionsEntry
+	var (
+		// old API
+		legacyRegistryCacheImports []string
+		// new API (CapImportCaches)
+		cacheImports []*pb.CacheOptionsEntry
+	)
+	supportCapImportCaches := c.caps.Supports(pb.CapImportCaches) == nil
 	for _, im := range creq.CacheImports {
-		cacheImports = append(cacheImports, &pb.CacheOptionsEntry{
-			Type:  im.Type,
-			Attrs: im.Attrs,
-		})
+		if !supportCapImportCaches && im.Type == "registry" {
+			legacyRegistryCacheImports = append(legacyRegistryCacheImports, im.Attrs["ref"])
+		} else {
+			cacheImports = append(cacheImports, &pb.CacheOptionsEntry{
+				Type:  im.Type,
+				Attrs: im.Attrs,
+			})
+		}
 	}
 
 	// these options are added by go client in solve()
@@ -381,8 +367,10 @@ func (c *grpcClient) Solve(ctx context.Context, creq client.SolveRequest) (res *
 		FrontendInputs:      creq.FrontendInputs,
 		AllowResultReturn:   true,
 		AllowResultArrayRef: true,
-		CacheImports:        cacheImports,
-		SourcePolicies:      creq.SourcePolicies,
+		// old API
+		ImportCacheRefsDeprecated: legacyRegistryCacheImports,
+		// new API
+		CacheImports: cacheImports,
 	}
 
 	// backwards compatibility with inline return
@@ -394,15 +382,30 @@ func (c *grpcClient) Solve(ctx context.Context, creq client.SolveRequest) (res *
 		if c.caps.Supports(pb.CapGatewayEvaluateSolve) == nil {
 			req.Evaluate = creq.Evaluate
 		} else {
-			// If evaluate is not supported, fallback to running Stat(".") in
-			// order to trigger an evaluation of the result.
+			// If evaluate is not supported, fallback to running Stat(".") in order to
+			// trigger an evaluation of the result.
 			defer func() {
 				if res == nil {
 					return
 				}
-				err = res.EachRef(func(ref client.Reference) error {
-					_, err := ref.StatFile(ctx, client.StatRequest{Path: "."})
-					return err
+
+				var (
+					id  string
+					ref client.Reference
+				)
+				ref, err = res.SingleRef()
+				if err != nil {
+					for refID := range res.Refs {
+						id = refID
+						break
+					}
+				} else {
+					id = ref.(*reference).id
+				}
+
+				_, err = c.client.StatFile(ctx, &pb.StatFileRequest{
+					Ref:  id,
+					Path: ".",
 				})
 			}()
 		}
@@ -413,7 +416,7 @@ func (c *grpcClient) Solve(ctx context.Context, creq client.SolveRequest) (res *
 		return nil, err
 	}
 
-	res = client.NewResult()
+	res = &client.Result{}
 	if resp.Result == nil {
 		if id := resp.Ref; id != "" {
 			c.requests[id] = req
@@ -454,25 +457,6 @@ func (c *grpcClient) Solve(ctx context.Context, creq client.SolveRequest) (res *
 				res.AddRef(k, ref)
 			}
 		}
-
-		if resp.Result.Attestations != nil {
-			for p, as := range resp.Result.Attestations {
-				for _, a := range as.Attestation {
-					att, err := client.AttestationFromPB[client.Reference](a)
-					if err != nil {
-						return nil, err
-					}
-					if a.Ref.Id != "" {
-						ref, err := newReference(c, a.Ref)
-						if err != nil {
-							return nil, err
-						}
-						att.Ref = ref
-					}
-					res.AddAttestation(p, *att)
-				}
-			}
-		}
 	}
 
 	return res, nil
@@ -489,15 +473,7 @@ func (c *grpcClient) ResolveImageConfig(ctx context.Context, ref string, opt llb
 			OSFeatures:   platform.OSFeatures,
 		}
 	}
-	resp, err := c.client.ResolveImageConfig(ctx, &pb.ResolveImageConfigRequest{
-		ResolverType: int32(opt.ResolverType),
-		Ref:          ref,
-		Platform:     p,
-		ResolveMode:  opt.ResolveMode,
-		LogName:      opt.LogName,
-		SessionID:    opt.Store.SessionID,
-		StoreID:      opt.Store.StoreID,
-	})
+	resp, err := c.client.ResolveImageConfig(ctx, &pb.ResolveImageConfigRequest{Ref: ref, Platform: p, ResolveMode: opt.ResolveMode, LogName: opt.LogName})
 	if err != nil {
 		return "", nil, err
 	}
@@ -520,7 +496,7 @@ func (c *grpcClient) CurrentFrontend() (*llb.State, error) {
 	if _, err := os.Stat(fp); err != nil {
 		return nil, nil
 	}
-	dt, err := os.ReadFile(fp)
+	dt, err := ioutil.ReadFile(fp)
 	if err != nil {
 		return nil, err
 	}
@@ -831,7 +807,6 @@ func (ctr *container) Start(ctx context.Context, req client.StartRequest) (clien
 		Tty:      req.Tty,
 		Security: req.SecurityMode,
 	}
-	init.Meta.RemoveMountStubsRecursive = req.RemoveMountStubsRecursive
 	if req.Stdin != nil {
 		init.Fds = append(init.Fds, 0)
 	}
@@ -1060,15 +1035,6 @@ func (r *reference) ToState() (st llb.State, err error) {
 	}
 
 	return llb.NewState(defop), nil
-}
-
-func (r *reference) Evaluate(ctx context.Context) error {
-	req := &pb.EvaluateRequest{Ref: r.id}
-	_, err := r.c.client.Evaluate(ctx, req)
-	if err != nil {
-		return err
-	}
-	return nil
 }
 
 func (r *reference) ReadFile(ctx context.Context, req client.ReadRequest) ([]byte, error) {

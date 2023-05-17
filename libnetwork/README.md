@@ -1,5 +1,7 @@
 # libnetwork - networking for containers
 
+[![Circle CI](https://circleci.com/gh/docker/libnetwork/tree/master.svg?style=svg)](https://circleci.com/gh/docker/libnetwork/tree/master) [![Coverage Status](https://coveralls.io/repos/docker/libnetwork/badge.svg)](https://coveralls.io/r/docker/libnetwork) [![GoDoc](https://godoc.org/github.com/docker/libnetwork?status.svg)](https://godoc.org/github.com/docker/libnetwork)
+
 Libnetwork provides a native Go implementation for connecting containers
 
 The goal of libnetwork is to deliver a robust Container Network Model that provides a consistent programming interface and the required network abstractions for applications.
@@ -13,19 +15,6 @@ There are many networking solutions available to suit a broad range of use-cases
 
 
 ```go
-package main
-
-import (
-	"fmt"
-	"log"
-
-	"github.com/docker/docker/pkg/reexec"
-	"github.com/docker/docker/libnetwork"
-	"github.com/docker/docker/libnetwork/config"
-	"github.com/docker/docker/libnetwork/netlabel"
-	"github.com/docker/docker/libnetwork/options"
-)
-
 func main() {
 	if reexec.Init() {
 		return
@@ -63,7 +52,7 @@ func main() {
 	// NewSandbox accepts Variadic optional arguments which libnetwork can use.
 	sbx, err := controller.NewSandbox("container1",
 		libnetwork.OptionHostname("test"),
-		libnetwork.OptionDomainname("example.com"))
+		libnetwork.OptionDomainname("docker.io"))
 	if err != nil {
 		log.Fatalf("controller.NewSandbox: %s", err)
 	}
@@ -88,6 +77,9 @@ func main() {
 	fmt.Printf("Joined endpoint %s (%s) to sandbox %s (%s)\n", ep.Name(), macAddress, sbx.ContainerID(), sbx.Key())
 }
 ```
+
+## Future
+Please refer to [roadmap](ROADMAP.md) for more information.
 
 ## Contributing
 

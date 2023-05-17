@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"time"
@@ -186,7 +187,7 @@ func (c *Client) callWithRetry(serviceMethod string, data io.Reader, retry bool,
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			b, err := io.ReadAll(resp.Body)
+			b, err := ioutil.ReadAll(resp.Body)
 			resp.Body.Close()
 			cancelRequest()
 			if err != nil {

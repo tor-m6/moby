@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/docker/myos"
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/platforms"
 	"github.com/docker/distribution"
@@ -34,7 +35,7 @@ import (
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-	archvariant "github.com/tonistiigi/go-archvariant"
+	// archvariant "github.com/tonistiigi/go-archvariant"
 )
 
 var (
@@ -1078,7 +1079,7 @@ func fixManifestLayers(m *schema1.Manifest) error {
 }
 
 func createDownloadFile() (*os.File, error) {
-	return os.CreateTemp("", "GetImageBlob")
+	return myos.CreateTemp("", "GetImageBlob")
 }
 
 func toOCIPlatform(p manifestlist.PlatformSpec) *specs.Platform {
@@ -1099,8 +1100,8 @@ func toOCIPlatform(p manifestlist.PlatformSpec) *specs.Platform {
 // maximumSpec returns the distribution platform with maximum compatibility for the current node.
 func maximumSpec() specs.Platform {
 	p := platforms.DefaultSpec()
-	if p.Architecture == "amd64" {
-		p.Variant = archvariant.AMD64Variant()
-	}
+	// if p.Architecture == "amd64" {
+	// 	p.Variant = archvariant.AMD64Variant()
+	// }
 	return p
 }

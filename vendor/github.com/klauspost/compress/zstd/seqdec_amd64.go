@@ -148,6 +148,7 @@ func (s *sequenceDecs) decodeSyncSimple(hist []byte) (bool, error) {
 	s.seqSize += ctx.litRemain
 	if s.seqSize > maxBlockSize {
 		return true, fmt.Errorf("output bigger than max block size (%d)", maxBlockSize)
+
 	}
 	err := br.close()
 	if err != nil {

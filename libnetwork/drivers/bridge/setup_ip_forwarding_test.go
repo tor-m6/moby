@@ -1,11 +1,8 @@
-//go:build linux
-// +build linux
-
 package bridge
 
 import (
 	"bytes"
-	"os"
+	"io/ioutil"
 	"testing"
 )
 
@@ -15,24 +12,24 @@ func TestSetupIPForwarding(t *testing.T) {
 	defer reconcileIPForwardingSetting(t, procSetting)
 
 	// Disable IP Forwarding if enabled
-	if bytes.Equal(procSetting, []byte("1\n")) {
+	if bytes.Compare(procSetting, []byte("1\n")) == 0 {
 		writeIPForwardingSetting(t, []byte{'0', '\n'})
 	}
 
 	// Set IP Forwarding
-	if err := setupIPForwarding(true, true); err != nil {
+	if err := setupIPForwarding(true); err != nil {
 		t.Fatalf("Failed to setup IP forwarding: %v", err)
 	}
 
 	// Read new setting
 	procSetting = readCurrentIPForwardingSetting(t)
-	if !bytes.Equal(procSetting, []byte("1\n")) {
+	if bytes.Compare(procSetting, []byte("1\n")) != 0 {
 		t.Fatal("Failed to effectively setup IP forwarding")
 	}
 }
 
 func readCurrentIPForwardingSetting(t *testing.T) []byte {
-	procSetting, err := os.ReadFile(ipv4ForwardConf)
+	procSetting, err := ioutil.ReadFile(ipv4ForwardConf)
 	if err != nil {
 		t.Fatalf("Can't execute test: Failed to read current IP forwarding setting: %v", err)
 	}
@@ -40,7 +37,7 @@ func readCurrentIPForwardingSetting(t *testing.T) []byte {
 }
 
 func writeIPForwardingSetting(t *testing.T, chars []byte) {
-	err := os.WriteFile(ipv4ForwardConf, chars, ipv4ForwardConfPerm)
+	err := ioutil.WriteFile(ipv4ForwardConf, chars, ipv4ForwardConfPerm)
 	if err != nil {
 		t.Fatalf("Can't execute or cleanup after test: Failed to reset IP forwarding: %v", err)
 	}
@@ -48,7 +45,7 @@ func writeIPForwardingSetting(t *testing.T, chars []byte) {
 
 func reconcileIPForwardingSetting(t *testing.T, original []byte) {
 	current := readCurrentIPForwardingSetting(t)
-	if !bytes.Equal(original, current) {
+	if bytes.Compare(original, current) != 0 {
 		writeIPForwardingSetting(t, original)
 	}
 }

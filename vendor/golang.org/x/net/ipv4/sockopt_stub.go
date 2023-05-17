@@ -10,7 +10,7 @@ package ipv4
 import (
 	"net"
 
-	"golang.org/x/net/bpf"
+	// "golang.org/x/net/bpf"
 	"golang.org/x/net/internal/socket"
 )
 
@@ -38,6 +38,6 @@ func (so *sockOpt) setSourceGroup(c *socket.Conn, ifi *net.Interface, grp, src n
 	return errNotImplemented
 }
 
-func (so *sockOpt) setBPF(c *socket.Conn, f []bpf.RawInstruction) error {
-	return errNotImplemented
-}
+// func (so *sockOpt) setBPF(c *socket.Conn, f []bpf.RawInstruction) error {
+// 	return errNotImplemented
+// }

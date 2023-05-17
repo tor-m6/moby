@@ -2,18 +2,18 @@ package local
 
 import (
 	"context"
+	"io/ioutil"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/docker/docker/pkg/idtools"
 	"github.com/moby/buildkit/cache"
 	"github.com/moby/buildkit/exporter"
-	"github.com/moby/buildkit/exporter/containerimage/exptypes"
-	"github.com/moby/buildkit/exporter/local"
-	"github.com/moby/buildkit/exporter/util/epoch"
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/session/filesync"
+	"github.com/moby/buildkit/snapshot"
 	"github.com/moby/buildkit/util/progress"
 	"github.com/pkg/errors"
 	"github.com/tonistiigi/fsutil"
@@ -21,8 +21,6 @@ import (
 )
 
 const (
-	attestationPrefixKey = "attestation-prefix"
-
 	// preferNondistLayersKey is an exporter option which can be used to mark a layer as non-distributable if the layer reference was
 	// already found to use a non-distributable media type.
 	// When this option is not set, the exporter will change the media type of the layer to a distributable one.
@@ -46,23 +44,13 @@ func New(opt Opt) (exporter.Exporter, error) {
 func (e *localExporter) Resolve(ctx context.Context, opt map[string]string) (exporter.ExporterInstance, error) {
 	li := &localExporterInstance{localExporter: e}
 
-	tm, opt, err := epoch.ParseExporterAttrs(opt)
-	if err != nil {
-		return nil, err
-	}
-	li.opts.Epoch = tm
-
-	for k, v := range opt {
-		switch k {
-		case preferNondistLayersKey:
-			b, err := strconv.ParseBool(v)
-			if err != nil {
-				return nil, errors.Wrapf(err, "non-bool value for %s: %s", preferNondistLayersKey, v)
-			}
-			li.preferNonDist = b
-		case attestationPrefixKey:
-			li.opts.AttestationPrefix = v
+	v, ok := opt[preferNondistLayersKey]
+	if ok {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, errors.Wrapf(err, "non-bool value for %s: %s", preferNondistLayersKey, v)
 		}
+		li.preferNonDist = b
 	}
 
 	return li, nil
@@ -70,20 +58,19 @@ func (e *localExporter) Resolve(ctx context.Context, opt map[string]string) (exp
 
 type localExporterInstance struct {
 	*localExporter
-	opts          local.CreateFSOpts
 	preferNonDist bool
 }
 
 func (e *localExporterInstance) Name() string {
-	return "exporting to client tarball"
+	return "exporting to client"
 }
 
-func (e *localExporterInstance) Config() *exporter.Config {
-	return exporter.NewConfig()
+func (e *localExporterInstance) Config() exporter.Config {
+	return exporter.Config{}
 }
 
-func (e *localExporterInstance) Export(ctx context.Context, inp *exporter.Source, sessionID string) (map[string]string, exporter.DescriptorReference, error) {
-	var defers []func() error
+func (e *localExporterInstance) Export(ctx context.Context, inp exporter.Source, sessionID string) (map[string]string, error) {
+	var defers []func()
 
 	defer func() {
 		for i := len(defers) - 1; i >= 0; i-- {
@@ -91,79 +78,80 @@ func (e *localExporterInstance) Export(ctx context.Context, inp *exporter.Source
 		}
 	}()
 
-	if e.opts.Epoch == nil {
-		if tm, ok, err := epoch.ParseSource(inp); err != nil {
-			return nil, nil, err
-		} else if ok {
-			e.opts.Epoch = tm
-		}
-	}
+	getDir := func(ctx context.Context, k string, ref cache.ImmutableRef) (*fsutil.Dir, error) {
+		var src string
+		var err error
+		var idmap *idtools.IdentityMapping
+		if ref == nil {
+			src, err = ioutil.TempDir("", "buildkit")
+			if err != nil {
+				return nil, err
+			}
+			defers = append(defers, func() { os.RemoveAll(src) })
+		} else {
+			mount, err := ref.Mount(ctx, true, session.NewGroup(sessionID))
+			if err != nil {
+				return nil, err
+			}
 
-	now := time.Now().Truncate(time.Second)
+			lm := snapshot.LocalMounter(mount)
 
-	getDir := func(ctx context.Context, k string, ref cache.ImmutableRef, attestations []exporter.Attestation) (*fsutil.Dir, error) {
-		outputFS, cleanup, err := local.CreateFS(ctx, sessionID, k, ref, attestations, now, e.opts)
-		if err != nil {
-			return nil, err
-		}
-		if cleanup != nil {
-			defers = append(defers, cleanup)
+			src, err = lm.Mount()
+			if err != nil {
+				return nil, err
+			}
+
+			idmap = mount.IdentityMapping()
+
+			defers = append(defers, func() { lm.Unmount() })
 		}
 
-		st := fstypes.Stat{
-			Mode: uint32(os.ModeDir | 0755),
-			Path: strings.Replace(k, "/", "_", -1),
-		}
-		if e.opts.Epoch != nil {
-			st.ModTime = e.opts.Epoch.UnixNano()
+		walkOpt := &fsutil.WalkOpt{}
+
+		if idmap != nil {
+			walkOpt.Map = func(p string, st *fstypes.Stat) fsutil.MapResult {
+				uid, gid, err := idmap.ToContainer(idtools.Identity{
+					UID: int(st.Uid),
+					GID: int(st.Gid),
+				})
+				if err != nil {
+					return 0
+				}
+				st.Uid = uint32(uid)
+				st.Gid = uint32(gid)
+				return 1
+			}
 		}
 
 		return &fsutil.Dir{
-			FS:   outputFS,
-			Stat: st,
+			FS: fsutil.NewFS(src, walkOpt),
+			Stat: fstypes.Stat{
+				Mode: uint32(os.ModeDir | 0755),
+				Path: strings.Replace(k, "/", "_", -1),
+			},
 		}, nil
-	}
-
-	isMap := len(inp.Refs) > 0
-	if _, ok := inp.Metadata[exptypes.ExporterPlatformsKey]; isMap && !ok {
-		return nil, nil, errors.Errorf("unable to export multiple refs, missing platforms mapping")
-	}
-	p, err := exptypes.ParsePlatforms(inp.Metadata)
-	if err != nil {
-		return nil, nil, err
-	}
-	if !isMap && len(p.Platforms) > 1 {
-		return nil, nil, errors.Errorf("unable to export multiple platforms without map")
 	}
 
 	var fs fsutil.FS
 
-	if len(p.Platforms) > 0 {
-		dirs := make([]fsutil.Dir, 0, len(p.Platforms))
-		for _, p := range p.Platforms {
-			r, ok := inp.FindRef(p.ID)
-			if !ok {
-				return nil, nil, errors.Errorf("failed to find ref for ID %s", p.ID)
-			}
-			d, err := getDir(ctx, p.ID, r, inp.Attestations[p.ID])
+	if len(inp.Refs) > 0 {
+		dirs := make([]fsutil.Dir, 0, len(inp.Refs))
+		for k, ref := range inp.Refs {
+			d, err := getDir(ctx, k, ref)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 			dirs = append(dirs, *d)
 		}
-		if isMap {
-			var err error
-			fs, err = fsutil.SubDirFS(dirs)
-			if err != nil {
-				return nil, nil, err
-			}
-		} else {
-			fs = dirs[0].FS
+		var err error
+		fs, err = fsutil.SubDirFS(dirs)
+		if err != nil {
+			return nil, err
 		}
 	} else {
-		d, err := getDir(ctx, "", inp.Ref, nil)
+		d, err := getDir(ctx, "", inp.Ref)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		fs = d.FS
 	}
@@ -173,17 +161,34 @@ func (e *localExporterInstance) Export(ctx context.Context, inp *exporter.Source
 
 	caller, err := e.opt.SessionManager.Get(timeoutCtx, sessionID, false)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	w, err := filesync.CopyFileWriter(ctx, nil, caller)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	report := progress.OneOff(ctx, "sending tarball")
+	report := oneOffProgress(ctx, "sending tarball")
 	if err := fsutil.WriteTar(ctx, fs, w); err != nil {
 		w.Close()
-		return nil, nil, report(err)
+		return nil, report(err)
 	}
-	return nil, nil, report(w.Close())
+	return nil, report(w.Close())
+}
+
+func oneOffProgress(ctx context.Context, id string) func(err error) error {
+	pw, _, _ := progress.NewFromContext(ctx)
+	now := time.Now()
+	st := progress.Status{
+		Started: &now,
+	}
+	pw.Write(id, st)
+	return func(err error) error {
+		// TODO: set error on status
+		now := time.Now()
+		st.Completed = &now
+		pw.Write(id, st)
+		pw.Close()
+		return err
+	}
 }

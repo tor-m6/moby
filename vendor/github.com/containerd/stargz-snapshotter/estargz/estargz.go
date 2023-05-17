@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"io/ioutil"
 	"os"
 	"path"
 	"sort"
@@ -605,7 +606,7 @@ func (fr *fileReader) ReadAt(p []byte, off int64) (n int, err error) {
 	defer dr.Close()
 
 	if fr.preRead == nil {
-		if n, err := io.CopyN(io.Discard, dr, ent.InnerOffset+off); n != ent.InnerOffset+off || err != nil {
+		if n, err := io.CopyN(ioutil.Discard, dr, ent.InnerOffset+off); n != ent.InnerOffset+off || err != nil {
 			return 0, fmt.Errorf("discard of %d bytes != %v, %v", ent.InnerOffset+off, n, err)
 		}
 		return io.ReadFull(dr, p)
@@ -622,13 +623,13 @@ func (fr *fileReader) ReadAt(p []byte, off int64) (n int, err error) {
 		if e.Offset != fr.r.toc.Entries[ent.chunkTopIndex].Offset {
 			break
 		}
-		if in, err := io.CopyN(io.Discard, dr, e.InnerOffset-nr); err != nil || in != e.InnerOffset-nr {
+		if in, err := io.CopyN(ioutil.Discard, dr, e.InnerOffset-nr); err != nil || in != e.InnerOffset-nr {
 			return 0, fmt.Errorf("discard of remaining %d bytes != %v, %v", e.InnerOffset-nr, in, err)
 		}
 		nr = e.InnerOffset
 		if e == ent {
 			found = true
-			if n, err := io.CopyN(io.Discard, dr, off); n != off || err != nil {
+			if n, err := io.CopyN(ioutil.Discard, dr, off); n != off || err != nil {
 				return 0, fmt.Errorf("discard of offset %d bytes != %v, %v", off, n, err)
 			}
 			retN, retErr = io.ReadFull(dr, p)
@@ -1039,7 +1040,7 @@ func (w *Writer) appendTar(r io.Reader, lossless bool) error {
 			}
 		}
 	}
-	remainDest := io.Discard
+	remainDest := ioutil.Discard
 	if lossless {
 		remainDest = dst // Preserve the remaining bytes in lossless mode
 	}

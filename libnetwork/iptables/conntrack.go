@@ -1,6 +1,3 @@
-//go:build linux
-// +build linux
-
 package iptables
 
 import (
@@ -8,8 +5,7 @@ import (
 	"net"
 	"syscall"
 
-	"github.com/docker/docker/libnetwork/types"
-	"github.com/sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 )
 
@@ -54,48 +50,10 @@ func DeleteConntrackEntries(nlh *netlink.Handle, ipv4List []net.IP, ipv6List []n
 	return totalIPv4FlowPurged, totalIPv6FlowPurged, nil
 }
 
-func DeleteConntrackEntriesByPort(nlh *netlink.Handle, proto types.Protocol, ports []uint16) error {
-	if !IsConntrackProgrammable(nlh) {
-		return ErrConntrackNotConfigurable
-	}
-
-	var totalIPv4FlowPurged uint
-	var totalIPv6FlowPurged uint
-
-	for _, port := range ports {
-		filter := &netlink.ConntrackFilter{}
-		if err := filter.AddProtocol(uint8(proto)); err != nil {
-			logrus.Warnf("Failed to delete conntrack state for %s port %d: %v", proto.String(), port, err)
-			continue
-		}
-		if err := filter.AddPort(netlink.ConntrackOrigDstPort, port); err != nil {
-			logrus.Warnf("Failed to delete conntrack state for %s port %d: %v", proto.String(), port, err)
-			continue
-		}
-
-		v4FlowPurged, err := nlh.ConntrackDeleteFilter(netlink.ConntrackTable, syscall.AF_INET, filter)
-		if err != nil {
-			logrus.Warnf("Failed to delete conntrack state for IPv4 %s port %d: %v", proto.String(), port, err)
-		}
-		totalIPv4FlowPurged += v4FlowPurged
-
-		v6FlowPurged, err := nlh.ConntrackDeleteFilter(netlink.ConntrackTable, syscall.AF_INET6, filter)
-		if err != nil {
-			logrus.Warnf("Failed to delete conntrack state for IPv6 %s port %d: %v", proto.String(), port, err)
-		}
-		totalIPv6FlowPurged += v6FlowPurged
-	}
-
-	logrus.Debugf("DeleteConntrackEntriesByPort for %s ports purged ipv4:%d, ipv6:%d", proto.String(), totalIPv4FlowPurged, totalIPv6FlowPurged)
-	return nil
-}
-
 func purgeConntrackState(nlh *netlink.Handle, family netlink.InetFamily, ipAddress net.IP) (uint, error) {
 	filter := &netlink.ConntrackFilter{}
 	// NOTE: doing the flush using the ipAddress is safe because today there cannot be multiple networks with the same subnet
 	// so it will not be possible to flush flows that are of other containers
-	if err := filter.AddIP(netlink.ConntrackNatAnyIP, ipAddress); err != nil {
-		return 0, err
-	}
+	filter.AddIP(netlink.ConntrackNatAnyIP, ipAddress)
 	return nlh.ConntrackDeleteFilter(netlink.ConntrackTable, family, filter)
 }

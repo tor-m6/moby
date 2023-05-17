@@ -2,9 +2,10 @@ package loggerutils // import "github.com/docker/docker/daemon/logger/loggerutil
 
 import (
 	"io"
-	"io/fs"
+	// "io/fs"
 	"os"
 	"runtime"
+	"github.com/docker/docker/myos"
 )
 
 type fileConvertFn func(dst io.WriteSeeker, src io.ReadSeeker) error
@@ -141,7 +142,7 @@ func (c *sharedTempFileConverter) openExisting(st stfcState, id stfID, v sharedT
 }
 
 func (c *sharedTempFileConverter) convert(f *os.File) (converted *os.File, size int64, err error) {
-	dst, err := os.CreateTemp(c.TempDir, "dockerdtemp.*")
+	dst, err := myos.CreateTemp(c.TempDir, "dockerdtemp.*")
 	if err != nil {
 		return nil, 0, err
 	}
@@ -200,7 +201,7 @@ func (stf sharedTempFile) Reader(c *sharedTempFileConverter, id stfID) *sharedFi
 
 func (r *sharedFileReader) Close() error {
 	if r.closed {
-		return fs.ErrClosed
+		return os.ErrClosed
 	}
 
 	st := <-r.c.st

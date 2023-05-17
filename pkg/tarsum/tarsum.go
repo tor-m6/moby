@@ -29,7 +29,7 @@ import (
 	"hash"
 	"io"
 	"path"
-	"strings"
+	"github.com/docker/docker/mystrings"
 )
 
 const (
@@ -62,7 +62,7 @@ func NewTarSumHash(r io.Reader, dc bool, v Version, tHash THash) (TarSum, error)
 
 // NewTarSumForLabel creates a new TarSum using the provided TarSum version+hash label.
 func NewTarSumForLabel(r io.Reader, disableCompression bool, label string) (TarSum, error) {
-	versionName, hashName, ok := strings.Cut(label, "+")
+	versionName, hashName, ok := mystrings.Cut(label, "+")
 	if !ok {
 		return nil, errors.New("tarsum label string should be of the form: {tarsum_version}+{hash_name}")
 	}

@@ -3,6 +3,7 @@ package opts // import "github.com/docker/docker/opts"
 import (
 	"fmt"
 	"strings"
+	"github.com/docker/docker/mystrings"
 
 	"github.com/docker/docker/api/types"
 )
@@ -29,7 +30,7 @@ func (o *RuntimeOpt) Name() string {
 
 // Set validates and updates the list of Runtimes
 func (o *RuntimeOpt) Set(val string) error {
-	k, v, ok := strings.Cut(val, "=")
+	k, v, ok := mystrings.Cut(val, "=")
 	if !ok {
 		return fmt.Errorf("invalid runtime argument: %s", val)
 	}

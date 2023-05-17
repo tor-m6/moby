@@ -13,12 +13,14 @@ import (
 	"github.com/moby/buildkit/cache"
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/solver"
+	"github.com/moby/buildkit/solver/llbsolver"
 	"github.com/moby/buildkit/solver/llbsolver/errdefs"
 	"github.com/moby/buildkit/solver/llbsolver/file"
 	"github.com/moby/buildkit/solver/llbsolver/ops/fileoptypes"
-	"github.com/moby/buildkit/solver/llbsolver/ops/opsutils"
 	"github.com/moby/buildkit/solver/pb"
 	"github.com/moby/buildkit/util/flightcontrol"
+	"github.com/moby/buildkit/util/progress"
+	"github.com/moby/buildkit/util/progress/controller"
 	"github.com/moby/buildkit/worker"
 	digest "github.com/opencontainers/go-digest"
 	"github.com/pkg/errors"
@@ -35,10 +37,11 @@ type fileOp struct {
 	solver      *FileOpSolver
 	numInputs   int
 	parallelism *semaphore.Weighted
+	vtx         solver.Vertex
 }
 
 func NewFileOp(v solver.Vertex, op *pb.Op_File, cm cache.Manager, parallelism *semaphore.Weighted, w worker.Worker) (solver.Op, error) {
-	if err := opsutils.Validate(&pb.Op{Op: op}); err != nil {
+	if err := llbsolver.ValidateOp(&pb.Op{Op: op}); err != nil {
 		return nil, err
 	}
 	return &fileOp{
@@ -46,13 +49,14 @@ func NewFileOp(v solver.Vertex, op *pb.Op_File, cm cache.Manager, parallelism *s
 		md:          cm,
 		numInputs:   len(v.Inputs()),
 		w:           w,
-		solver:      NewFileOpSolver(w, &file.Backend{}, file.NewRefManager(cm, v.Name())),
+		solver:      NewFileOpSolver(w, &file.Backend{}, file.NewRefManager(cm)),
 		parallelism: parallelism,
+		vtx:         v,
 	}, nil
 }
 
 func (f *fileOp) CacheMap(ctx context.Context, g session.Group, index int) (*solver.CacheMap, bool, error) {
-	selectors := map[int][]opsutils.Selector{}
+	selectors := map[int][]llbsolver.Selector{}
 	invalidSelectors := map[int]struct{}{}
 
 	actions := make([][]byte, 0, len(f.op.Actions))
@@ -134,6 +138,14 @@ func (f *fileOp) CacheMap(ctx context.Context, g session.Group, index int) (*sol
 			ComputeDigestFunc solver.ResultBasedCacheFunc
 			PreprocessFunc    solver.PreprocessFunc
 		}, f.numInputs),
+		Opts: solver.CacheOpts(map[interface{}]interface{}{
+			cache.ProgressKey{}: &controller.Controller{
+				WriterFactory: progress.FromContext(ctx),
+				Digest:        f.vtx.Digest(),
+				Name:          f.vtx.Name(),
+				ProgressGroup: f.vtx.Options().ProgressGroup,
+			},
+		}),
 	}
 
 	for idx, m := range selectors {
@@ -149,10 +161,10 @@ func (f *fileOp) CacheMap(ctx context.Context, g session.Group, index int) (*sol
 		})
 		cm.Deps[idx].Selector = digest.FromBytes(bytes.Join(dgsts, []byte{0}))
 
-		cm.Deps[idx].ComputeDigestFunc = opsutils.NewContentHashFunc(dedupeSelectors(m))
+		cm.Deps[idx].ComputeDigestFunc = llbsolver.NewContentHashFunc(dedupeSelectors(m))
 	}
 	for idx := range cm.Deps {
-		cm.Deps[idx].PreprocessFunc = unlazyResultFunc
+		cm.Deps[idx].PreprocessFunc = llbsolver.UnlazyResultFunc
 	}
 
 	return cm, true, nil
@@ -194,8 +206,8 @@ func (f *fileOp) Acquire(ctx context.Context) (solver.ReleaseFunc, error) {
 	}, nil
 }
 
-func addSelector(m map[int][]opsutils.Selector, idx int, sel string, wildcard, followLinks bool, includePatterns, excludePatterns []string) {
-	s := opsutils.Selector{
+func addSelector(m map[int][]llbsolver.Selector, idx int, sel string, wildcard, followLinks bool, includePatterns, excludePatterns []string) {
+	s := llbsolver.Selector{
 		Path:            sel,
 		FollowLinks:     followLinks,
 		Wildcard:        wildcard && containsWildcards(sel),
@@ -219,7 +231,7 @@ func containsWildcards(name string) bool {
 	return false
 }
 
-func dedupeSelectors(m []opsutils.Selector) []opsutils.Selector {
+func dedupeSelectors(m []llbsolver.Selector) []llbsolver.Selector {
 	paths := make([]string, 0, len(m))
 	pathsFollow := make([]string, 0, len(m))
 	for _, sel := range m {
@@ -233,13 +245,13 @@ func dedupeSelectors(m []opsutils.Selector) []opsutils.Selector {
 	}
 	paths = dedupePaths(paths)
 	pathsFollow = dedupePaths(pathsFollow)
-	selectors := make([]opsutils.Selector, 0, len(m))
+	selectors := make([]llbsolver.Selector, 0, len(m))
 
 	for _, p := range paths {
-		selectors = append(selectors, opsutils.Selector{Path: p})
+		selectors = append(selectors, llbsolver.Selector{Path: p})
 	}
 	for _, p := range pathsFollow {
-		selectors = append(selectors, opsutils.Selector{Path: p, FollowLinks: true})
+		selectors = append(selectors, llbsolver.Selector{Path: p, FollowLinks: true})
 	}
 
 	for _, sel := range m {
@@ -255,7 +267,7 @@ func dedupeSelectors(m []opsutils.Selector) []opsutils.Selector {
 	return selectors
 }
 
-func processOwner(chopt *pb.ChownOpt, selectors map[int][]opsutils.Selector) error {
+func processOwner(chopt *pb.ChownOpt, selectors map[int][]llbsolver.Selector) error {
 	if chopt == nil {
 		return nil
 	}
@@ -664,15 +676,4 @@ func isDefaultIndexes(idxs [][]int) bool {
 		}
 	}
 	return true
-}
-
-func unlazyResultFunc(ctx context.Context, res solver.Result, g session.Group) error {
-	ref, ok := res.Sys().(*worker.WorkerRef)
-	if !ok {
-		return errors.Errorf("invalid reference: %T", res)
-	}
-	if ref.ImmutableRef == nil {
-		return nil
-	}
-	return ref.ImmutableRef.Extract(ctx, g)
 }

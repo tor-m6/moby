@@ -1,12 +1,11 @@
-//go:build linux
-// +build linux
-
 package ipvlan
 
 import (
 	"testing"
 
-	"github.com/docker/docker/libnetwork/driverapi"
+	"github.com/docker/docker/pkg/plugingetter"
+	"github.com/docker/libnetwork/driverapi"
+	_ "github.com/docker/libnetwork/testutils"
 )
 
 const testNetworkType = "ipvlan"
@@ -14,6 +13,10 @@ const testNetworkType = "ipvlan"
 type driverTester struct {
 	t *testing.T
 	d *driver
+}
+
+func (dt *driverTester) GetPluginGetter() plugingetter.PluginGetter {
+	return nil
 }
 
 func (dt *driverTester) RegisterDriver(name string, drv driverapi.Driver,
@@ -32,15 +35,15 @@ func (dt *driverTester) RegisterDriver(name string, drv driverapi.Driver,
 	return nil
 }
 
-func TestIpvlanRegister(t *testing.T) {
-	if err := Register(&driverTester{t: t}, nil); err != nil {
+func TestIpvlanInit(t *testing.T) {
+	if err := Init(&driverTester{t: t}, nil); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestIpvlanNilConfig(t *testing.T) {
 	dt := &driverTester{t: t}
-	if err := Register(dt, nil); err != nil {
+	if err := Init(dt, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -51,7 +54,7 @@ func TestIpvlanNilConfig(t *testing.T) {
 
 func TestIpvlanType(t *testing.T) {
 	dt := &driverTester{t: t}
-	if err := Register(dt, nil); err != nil {
+	if err := Init(dt, nil); err != nil {
 		t.Fatal(err)
 	}
 

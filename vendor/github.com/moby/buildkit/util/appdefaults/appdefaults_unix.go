@@ -10,11 +10,9 @@ import (
 )
 
 const (
-	Address              = "unix:///run/buildkit/buildkitd.sock"
-	Root                 = "/var/lib/buildkit"
-	ConfigDir            = "/etc/buildkit"
-	DefaultCNIBinDir     = "/opt/cni/bin"
-	DefaultCNIConfigPath = "/etc/buildkit/cni.json"
+	Address   = "unix:///run/buildkit/buildkitd.sock"
+	Root      = "/var/lib/buildkit"
+	ConfigDir = "/etc/buildkit"
 )
 
 // UserAddress typically returns /run/user/$UID/buildkit/buildkitd.sock

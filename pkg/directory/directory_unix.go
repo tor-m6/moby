@@ -1,5 +1,5 @@
-//go:build linux || freebsd || darwin
-// +build linux freebsd darwin
+//go:build linux || freebsd || darwin || inno
+// +build linux freebsd darwin inno
 
 package directory // import "github.com/docker/docker/pkg/directory"
 

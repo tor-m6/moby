@@ -7,7 +7,7 @@ import (
 
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/solver"
-	"github.com/moby/buildkit/solver/llbsolver/ops/opsutils"
+	"github.com/moby/buildkit/solver/llbsolver"
 	"github.com/moby/buildkit/solver/pb"
 	"github.com/moby/buildkit/source"
 	"github.com/moby/buildkit/worker"
@@ -17,7 +17,7 @@ import (
 
 const sourceCacheType = "buildkit.source.v0"
 
-type SourceOp struct {
+type sourceOp struct {
 	mu          sync.Mutex
 	op          *pb.Op_Source
 	platform    *pb.Platform
@@ -27,17 +27,13 @@ type SourceOp struct {
 	w           worker.Worker
 	vtx         solver.Vertex
 	parallelism *semaphore.Weighted
-	pin         string
-	id          source.Identifier
 }
 
-var _ solver.Op = &SourceOp{}
-
-func NewSourceOp(vtx solver.Vertex, op *pb.Op_Source, platform *pb.Platform, sm *source.Manager, parallelism *semaphore.Weighted, sessM *session.Manager, w worker.Worker) (*SourceOp, error) {
-	if err := opsutils.Validate(&pb.Op{Op: op}); err != nil {
+func NewSourceOp(vtx solver.Vertex, op *pb.Op_Source, platform *pb.Platform, sm *source.Manager, parallelism *semaphore.Weighted, sessM *session.Manager, w worker.Worker) (solver.Op, error) {
+	if err := llbsolver.ValidateOp(&pb.Op{Op: op}); err != nil {
 		return nil, err
 	}
-	return &SourceOp{
+	return &sourceOp{
 		op:          op,
 		sm:          sm,
 		w:           w,
@@ -48,13 +44,7 @@ func NewSourceOp(vtx solver.Vertex, op *pb.Op_Source, platform *pb.Platform, sm 
 	}, nil
 }
 
-func (s *SourceOp) IsProvenanceProvider() {}
-
-func (s *SourceOp) Pin() (source.Identifier, string) {
-	return s.id, s.pin
-}
-
-func (s *SourceOp) instance(ctx context.Context) (source.SourceInstance, error) {
+func (s *sourceOp) instance(ctx context.Context) (source.SourceInstance, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.src != nil {
@@ -69,11 +59,10 @@ func (s *SourceOp) instance(ctx context.Context) (source.SourceInstance, error) 
 		return nil, err
 	}
 	s.src = src
-	s.id = id
 	return s.src, nil
 }
 
-func (s *SourceOp) CacheMap(ctx context.Context, g session.Group, index int) (*solver.CacheMap, bool, error) {
+func (s *sourceOp) CacheMap(ctx context.Context, g session.Group, index int) (*solver.CacheMap, bool, error) {
 	src, err := s.instance(ctx)
 	if err != nil {
 		return nil, false, err
@@ -84,23 +73,25 @@ func (s *SourceOp) CacheMap(ctx context.Context, g session.Group, index int) (*s
 		return nil, false, err
 	}
 
-	if s.pin == "" {
-		s.pin = pin
-	}
-
 	dgst := digest.FromBytes([]byte(sourceCacheType + ":" + k))
 	if strings.HasPrefix(k, "session:") {
 		dgst = digest.Digest("random:" + strings.TrimPrefix(dgst.String(), dgst.Algorithm().String()+":"))
 	}
 
+	var buildSources map[string]string
+	if !strings.HasPrefix(s.op.Source.GetIdentifier(), "local://") {
+		buildSources = map[string]string{s.op.Source.GetIdentifier(): pin}
+	}
+
 	return &solver.CacheMap{
 		// TODO: add os/arch
-		Digest: dgst,
-		Opts:   cacheOpts,
+		Digest:       dgst,
+		Opts:         cacheOpts,
+		BuildSources: buildSources,
 	}, done, nil
 }
 
-func (s *SourceOp) Exec(ctx context.Context, g session.Group, _ []solver.Result) (outputs []solver.Result, err error) {
+func (s *sourceOp) Exec(ctx context.Context, g session.Group, _ []solver.Result) (outputs []solver.Result, err error) {
 	src, err := s.instance(ctx)
 	if err != nil {
 		return nil, err
@@ -112,7 +103,7 @@ func (s *SourceOp) Exec(ctx context.Context, g session.Group, _ []solver.Result)
 	return []solver.Result{worker.NewWorkerRefResult(ref, s.w)}, nil
 }
 
-func (s *SourceOp) Acquire(ctx context.Context) (solver.ReleaseFunc, error) {
+func (s *sourceOp) Acquire(ctx context.Context) (solver.ReleaseFunc, error) {
 	if s.parallelism == nil {
 		return func() {}, nil
 	}

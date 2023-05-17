@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"io/ioutil"
 	"path/filepath"
 
 	"github.com/containerd/containerd/pkg/userns"
@@ -35,7 +36,7 @@ var ErrNotADevice = errors.New("not a device node")
 
 // Testing dependencies
 var (
-	osReadDir              = os.ReadDir
+	osReadDir              = ioutil.ReadDir
 	usernsRunningInUserNS  = userns.RunningInUserNS
 	overrideDeviceFromPath func(path string) error
 )

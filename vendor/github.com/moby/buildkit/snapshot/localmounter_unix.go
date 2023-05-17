@@ -4,11 +4,13 @@
 package snapshot
 
 import (
+	"io/ioutil"
 	"os"
-	"syscall"
+	// "syscall"
 
 	"github.com/containerd/containerd/mount"
 	"github.com/pkg/errors"
+	"golang.org/x/sys/unix"
 )
 
 func (lm *localMounter) Mount() (string, error) {
@@ -37,7 +39,7 @@ func (lm *localMounter) Mount() (string, error) {
 		}
 	}
 
-	dir, err := os.MkdirTemp("", "buildkit-mount")
+	dir, err := ioutil.TempDir("", "buildkit-mount")
 	if err != nil {
 		return "", errors.Wrap(err, "failed to create temp dir")
 	}
@@ -55,7 +57,7 @@ func (lm *localMounter) Unmount() error {
 	defer lm.mu.Unlock()
 
 	if lm.target != "" {
-		if err := mount.Unmount(lm.target, syscall.MNT_DETACH); err != nil {
+		if err := mount.Unmount(lm.target, unix.MNT_DETACH); err != nil {
 			return err
 		}
 		os.RemoveAll(lm.target)

@@ -3,10 +3,12 @@ package portallocator
 import (
 	"net"
 	"testing"
+
+	_ "github.com/docker/libnetwork/testutils"
 )
 
 func resetPortAllocator() {
-	instance = NewInstance()
+	instance = newInstance()
 }
 
 func TestRequestNewPort(t *testing.T) {
@@ -171,9 +173,7 @@ func BenchmarkAllocatePorts(b *testing.B) {
 				b.Fatalf("Expected port %d got %d", expected, port)
 			}
 		}
-		if err := p.ReleaseAll(); err != nil {
-			b.Fatal(err)
-		}
+		p.ReleaseAll()
 	}
 }
 

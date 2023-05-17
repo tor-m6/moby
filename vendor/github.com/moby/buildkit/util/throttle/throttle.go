@@ -31,7 +31,7 @@ func throttle(d time.Duration, f func(), wait bool) func() {
 			go func() {
 				for {
 					mu.Lock()
-					if !next {
+					if next == false {
 						running = false
 						mu.Unlock()
 						return

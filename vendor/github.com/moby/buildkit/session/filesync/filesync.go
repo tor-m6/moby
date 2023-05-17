@@ -27,35 +27,27 @@ const (
 )
 
 type fsSyncProvider struct {
-	dirs   DirSource
+	dirs   map[string]SyncedDir
 	p      progressCb
 	doneCh chan error
 }
 
 type SyncedDir struct {
+	Name     string
 	Dir      string
 	Excludes []string
 	Map      func(string, *fstypes.Stat) fsutil.MapResult
 }
 
-type DirSource interface {
-	LookupDir(string) (SyncedDir, bool)
-}
-
-type StaticDirSource map[string]SyncedDir
-
-var _ DirSource = StaticDirSource{}
-
-func (dirs StaticDirSource) LookupDir(name string) (SyncedDir, bool) {
-	dir, found := dirs[name]
-	return dir, found
-}
-
 // NewFSSyncProvider creates a new provider for sending files from client
-func NewFSSyncProvider(dirs DirSource) session.Attachable {
-	return &fsSyncProvider{
-		dirs: dirs,
+func NewFSSyncProvider(dirs []SyncedDir) session.Attachable {
+	p := &fsSyncProvider{
+		dirs: map[string]SyncedDir{},
 	}
+	for _, d := range dirs {
+		p.dirs[d.Name] = d
+	}
+	return p
 }
 
 func (sp *fsSyncProvider) Register(server *grpc.Server) {
@@ -89,7 +81,7 @@ func (sp *fsSyncProvider) handle(method string, stream grpc.ServerStream) (retEr
 		dirName = name[0]
 	}
 
-	dir, ok := sp.dirs.LookupDir(dirName)
+	dir, ok := sp.dirs[dirName]
 	if !ok {
 		return InvalidSessionError{status.Errorf(codes.NotFound, "no access allowed to dir %q", dirName)}
 	}

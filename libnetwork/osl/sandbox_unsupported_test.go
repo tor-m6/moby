@@ -1,5 +1,4 @@
-//go:build !linux
-// +build !linux
+// +build !linux,!solaris
 
 package osl
 
@@ -11,7 +10,7 @@ import (
 var ErrNotImplemented = errors.New("not implemented")
 
 func newKey(t *testing.T) (string, error) {
-	return "", ErrNotImplemented
+	return nil, ErrNotImplemented
 }
 
 func verifySandbox(t *testing.T, s Sandbox) {

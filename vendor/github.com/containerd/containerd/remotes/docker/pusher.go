@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"strings"
@@ -267,7 +268,7 @@ func (p dockerPusher) push(ctx context.Context, desc ocispec.Descriptor, ref str
 	req.body = func() (io.ReadCloser, error) {
 		pr, pw := io.Pipe()
 		pushw.setPipe(pw)
-		return io.NopCloser(pr), nil
+		return ioutil.NopCloser(pr), nil
 	}
 	req.size = desc.Size
 

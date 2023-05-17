@@ -1,9 +1,9 @@
 package libnetwork
 
 import (
-	windriver "github.com/docker/docker/libnetwork/drivers/windows"
-	"github.com/docker/docker/libnetwork/options"
-	"github.com/docker/docker/libnetwork/types"
+	windriver "github.com/docker/libnetwork/drivers/windows"
+	"github.com/docker/libnetwork/options"
+	"github.com/docker/libnetwork/types"
 )
 
 const libnGWNetwork = "nat"
@@ -17,6 +17,6 @@ func getPlatformOption() EndpointOption {
 	return EndpointOptionGeneric(epOption)
 }
 
-func (c *Controller) createGWNetwork() (Network, error) {
+func (c *controller) createGWNetwork() (Network, error) {
 	return nil, types.NotImplementedErrorf("default gateway functionality is not implemented in windows")
 }

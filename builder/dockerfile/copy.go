@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/docker/myfilepath"
 	"github.com/docker/docker/builder"
 	"github.com/docker/docker/builder/remotecontext"
 	"github.com/docker/docker/builder/remotecontext/urlutil"
@@ -258,7 +259,7 @@ func (o *copier) storeInPathCache(im *imageMount, path string, hash string) {
 func (o *copier) copyWithWildcards(origPath string) ([]copyInfo, error) {
 	root := o.source.Root()
 	var copyInfos []copyInfo
-	if err := filepath.WalkDir(root, func(path string, _ os.DirEntry, err error) error {
+	if err := myfilepath.WalkDir(root, func(path string, _ os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -316,7 +317,7 @@ func walkSource(source builder.Source, origPath string) ([]string, error) {
 	}
 	// Must be a dir
 	var subfiles []string
-	err = filepath.WalkDir(fp, func(path string, _ os.DirEntry, err error) error {
+	err = myfilepath.WalkDir(fp, func(path string, _ os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}

@@ -6,12 +6,13 @@
 package platform // import "github.com/docker/docker/pkg/platform"
 
 import (
+	"syscall"
 	"golang.org/x/sys/unix"
 )
 
 // runtimeArchitecture gets the name of the current architecture (x86, x86_64, i86pc, sun4v, ...)
 func runtimeArchitecture() (string, error) {
-	utsname := &unix.Utsname{}
+	utsname := &syscall.Utsname{}
 	if err := unix.Uname(utsname); err != nil {
 		return "", err
 	}

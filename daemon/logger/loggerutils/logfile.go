@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/fs"
+	// "io/fs"
 	"math"
 	"os"
 	"strconv"
@@ -209,7 +209,7 @@ func (w *LogFile) rotate() (retErr error) {
 	fname := w.f.Name()
 	if err := w.f.Close(); err != nil {
 		// if there was an error during a prior rotate, the file could already be closed
-		if !errors.Is(err, fs.ErrClosed) {
+		if !errors.Is(err, os.ErrClosed) {
 			return errors.Wrap(err, "error closing file")
 		}
 	}
@@ -227,11 +227,11 @@ func (w *LogFile) rotate() (retErr error) {
 			// name as the current one so we need to rotate the
 			// current file out of the way.
 			if w.maxFiles < 2 {
-				if err := unlink(fname); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				if err := unlink(fname); err != nil && !errors.Is(err, os.ErrNotExist) {
 					logrus.WithError(err).Error("Error unlinking current log file")
 				}
 			} else {
-				if err := os.Rename(fname, fname+".1"); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				if err := os.Rename(fname, fname+".1"); err != nil && !errors.Is(err, os.ErrNotExist) {
 					logrus.WithError(err).Error("Error renaming current log file")
 				}
 			}
@@ -281,7 +281,7 @@ func rotate(name string, maxFiles int, compress bool) error {
 
 	lastFile := fmt.Sprintf("%s.%d%s", name, maxFiles-1, extension)
 	err := unlink(lastFile)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return errors.Wrap(err, "error removing oldest log file")
 	}
 
@@ -290,7 +290,7 @@ func rotate(name string, maxFiles int, compress bool) error {
 		fromPath := name + "." + strconv.Itoa(i-1) + extension
 		err := os.Rename(fromPath, toPath)
 		logrus.WithError(err).WithField("source", fromPath).WithField("target", toPath).Trace("Rotating log file")
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}
@@ -301,7 +301,7 @@ func rotate(name string, maxFiles int, compress bool) error {
 func compressFile(fileName string, lastTimestamp time.Time) (retErr error) {
 	file, err := open(fileName)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
+		if errors.Is(err, os.ErrNotExist) {
 			logrus.WithField("file", fileName).WithError(err).Debug("Could not open log file to compress")
 			return nil
 		}
@@ -311,7 +311,7 @@ func compressFile(fileName string, lastTimestamp time.Time) (retErr error) {
 		file.Close()
 		if retErr == nil {
 			err := unlink(fileName)
-			if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
 				retErr = errors.Wrap(err, "failed to remove source log file")
 			}
 		}
@@ -324,7 +324,7 @@ func compressFile(fileName string, lastTimestamp time.Time) (retErr error) {
 	defer func() {
 		outFile.Close()
 		if retErr != nil {
-			if err := unlink(fileName + ".gz"); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			if err := unlink(fileName + ".gz"); err != nil && !errors.Is(err, os.ErrNotExist) {
 				logrus.WithError(err).Error("Error cleaning up after failed log compression")
 			}
 		}
@@ -364,7 +364,7 @@ func (w *LogFile) Close() error {
 		return nil
 	default:
 	}
-	if err := w.f.Close(); err != nil && !errors.Is(err, fs.ErrClosed) {
+	if err := w.f.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
 		return err
 	}
 	close(w.closed)
@@ -434,7 +434,7 @@ func (w *LogFile) readLogsLocked(currentPos logPos, config logger.ReadConfig, wa
 			switch ff := f.(type) {
 			case SizeReaderAt:
 				readers = append(readers, ff)
-			case interface{ Stat() (fs.FileInfo, error) }:
+			case interface{ Stat() (os.FileInfo, error) }:
 				stat, err := ff.Stat()
 				if err != nil {
 					watcher.Err <- errors.Wrap(err, "error reading size of rotated file")
@@ -501,13 +501,13 @@ func (w *LogFile) openRotatedFiles(config logger.ReadConfig) (files []readAtClos
 			var f rotatedFile
 			f.f, err = open(fmt.Sprintf("%s.%d", w.f.Name(), i-1))
 			if err != nil {
-				if !errors.Is(err, fs.ErrNotExist) {
+				if !errors.Is(err, os.ErrNotExist) {
 					return nil, errors.Wrap(err, "error opening rotated log file")
 				}
 				f.compressed = true
 				f.f, err = open(fmt.Sprintf("%s.%d.gz", w.f.Name(), i-1))
 				if err != nil {
-					if !errors.Is(err, fs.ErrNotExist) {
+					if !errors.Is(err, os.ErrNotExist) {
 						return nil, errors.Wrap(err, "error opening file for decompression")
 					}
 					continue

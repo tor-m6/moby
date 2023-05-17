@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"github.com/docker/docker/mystrings"
 
 	"github.com/containerd/containerd/platforms"
 	"github.com/docker/docker/api"
@@ -46,7 +47,7 @@ func dispatchEnv(ctx context.Context, d dispatchRequest, c *instructions.EnvComm
 		commitMessage.WriteString(" " + newVar)
 		gotOne := false
 		for i, envVar := range runConfig.Env {
-			compareFrom, _, _ := strings.Cut(envVar, "=")
+			compareFrom, _, _ := mystrings.Cut(envVar, "=")
 			if shell.EqualEnvKeys(compareFrom, name) {
 				runConfig.Env[i] = newVar
 				gotOne = true
@@ -409,7 +410,7 @@ func dispatchRun(ctx context.Context, d dispatchRequest, c *instructions.RunComm
 func prependEnvOnCmd(buildArgs *BuildArgs, buildArgVars []string, cmd strslice.StrSlice) strslice.StrSlice {
 	tmpBuildEnv := make([]string, 0, len(buildArgVars))
 	for _, env := range buildArgVars {
-		key, _, _ := strings.Cut(env, "=")
+		key, _, _ := mystrings.Cut(env, "=")
 		if buildArgs.IsReferencedOrNotBuiltin(key) {
 			tmpBuildEnv = append(tmpBuildEnv, env)
 		}
@@ -462,7 +463,7 @@ func dispatchHealthcheck(ctx context.Context, d dispatchRequest, c *instructions
 			fmt.Fprintf(d.builder.Stdout, "Note: overriding previous HEALTHCHECK: %v\n", oldCmd)
 		}
 	}
-	runConfig.Healthcheck = c.Health
+	// runConfig.Healthcheck = c.Health
 	return d.builder.commit(ctx, d.state, fmt.Sprintf("HEALTHCHECK %q", runConfig.Healthcheck))
 }
 
@@ -595,6 +596,6 @@ func dispatchArg(ctx context.Context, d dispatchRequest, c *instructions.ArgComm
 //
 // Set the non-default shell to use.
 func dispatchShell(ctx context.Context, d dispatchRequest, c *instructions.ShellCommand) error {
-	d.state.runConfig.Shell = c.Shell
+	// d.state.runConfig.Shell = c.Shell
 	return d.builder.commit(ctx, d.state, fmt.Sprintf("SHELL %v", d.state.runConfig.Shell))
 }

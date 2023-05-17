@@ -1,16 +1,34 @@
 package libnetwork
 
 import (
-	"os"
-	"path/filepath"
+	"fmt"
+	"io/ioutil"
 	"testing"
 
-	"github.com/docker/docker/libnetwork/config"
-	"github.com/docker/docker/libnetwork/datastore"
-	"github.com/docker/docker/libnetwork/netlabel"
-	"github.com/docker/docker/libnetwork/options"
 	"github.com/docker/libkv/store"
+	"github.com/docker/libnetwork/config"
+	"github.com/docker/libnetwork/datastore"
+	"github.com/docker/libnetwork/netlabel"
+	"github.com/docker/libnetwork/options"
 )
+
+func testZooKeeperBackend(t *testing.T) {
+	c, err := testNewController(t, "zk", "127.0.0.1:2181/custom_prefix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Stop()
+}
+
+func testNewController(t *testing.T, provider, url string) (NetworkController, error) {
+	cfgOptions, err := OptionBoltdbWithRandomDBFile()
+	if err != nil {
+		return nil, err
+	}
+	cfgOptions = append(cfgOptions, config.OptionKVProvider(provider))
+	cfgOptions = append(cfgOptions, config.OptionKVProviderURL(url))
+	return New(cfgOptions...)
+}
 
 func testLocalBackend(t *testing.T, provider, url string, storeConfig *store.Config) {
 	cfgOptions := []config.Option{}
@@ -27,7 +45,6 @@ func testLocalBackend(t *testing.T, provider, url string, storeConfig *store.Con
 	if err != nil {
 		t.Fatalf("Error new controller: %v", err)
 	}
-	defer ctrl.Stop()
 	nw, err := ctrl.NewNetwork("host", "host", "")
 	if err != nil {
 		t.Fatalf("Error creating default \"host\" network: %v", err)
@@ -36,11 +53,11 @@ func testLocalBackend(t *testing.T, provider, url string, storeConfig *store.Con
 	if err != nil {
 		t.Fatalf("Error creating endpoint: %v", err)
 	}
-	store := ctrl.getStore().KVStore()
-	if exists, err := store.Exists(datastore.Key(datastore.NetworkKeyPrefix, nw.ID())); !exists || err != nil {
+	store := ctrl.(*controller).getStore(datastore.LocalScope).KVStore()
+	if exists, err := store.Exists(datastore.Key(datastore.NetworkKeyPrefix, string(nw.ID()))); !exists || err != nil {
 		t.Fatalf("Network key should have been created.")
 	}
-	if exists, err := store.Exists(datastore.Key([]string{datastore.EndpointKeyPrefix, nw.ID(), ep.ID()}...)); !exists || err != nil {
+	if exists, err := store.Exists(datastore.Key([]string{datastore.EndpointKeyPrefix, string(nw.ID()), string(ep.ID())}...)); !exists || err != nil {
 		t.Fatalf("Endpoint key should have been created.")
 	}
 	store.Close()
@@ -50,38 +67,41 @@ func testLocalBackend(t *testing.T, provider, url string, storeConfig *store.Con
 	if err != nil {
 		t.Fatalf("Error creating controller: %v", err)
 	}
-	defer ctrl.Stop()
 	if _, err = ctrl.NetworkByID(nw.ID()); err != nil {
 		t.Fatalf("Error getting network %v", err)
 	}
 }
 
 // OptionBoltdbWithRandomDBFile function returns a random dir for local store backend
-func OptionBoltdbWithRandomDBFile(t *testing.T) config.Option {
-	t.Helper()
-	tmp := filepath.Join(t.TempDir(), "bolt.db")
-	if err := os.WriteFile(tmp, nil, 0o600); err != nil {
-		t.Fatal(err)
+func OptionBoltdbWithRandomDBFile() ([]config.Option, error) {
+	tmp, err := ioutil.TempFile("", "libnetwork-")
+	if err != nil {
+		return nil, fmt.Errorf("Error creating temp file: %v", err)
 	}
-
-	return func(c *config.Config) {
-		config.OptionLocalKVProvider("boltdb")(c)
-		config.OptionLocalKVProviderURL(tmp)(c)
-		config.OptionLocalKVProviderConfig(&store.Config{Bucket: "testBackend"})(c)
+	if err := tmp.Close(); err != nil {
+		return nil, fmt.Errorf("Error closing temp file: %v", err)
 	}
+	cfgOptions := []config.Option{}
+	cfgOptions = append(cfgOptions, config.OptionLocalKVProvider("boltdb"))
+	cfgOptions = append(cfgOptions, config.OptionLocalKVProviderURL(tmp.Name()))
+	sCfg := &store.Config{Bucket: "testBackend"}
+	cfgOptions = append(cfgOptions, config.OptionLocalKVProviderConfig(sCfg))
+	return cfgOptions, nil
 }
 
 func TestMultipleControllersWithSameStore(t *testing.T) {
-	cfgOptions := OptionBoltdbWithRandomDBFile(t)
-	ctrl1, err := New(cfgOptions)
+	cfgOptions, err := OptionBoltdbWithRandomDBFile()
+	if err != nil {
+		t.Fatalf("Error getting random boltdb configs %v", err)
+	}
+	ctrl1, err := New(cfgOptions...)
 	if err != nil {
 		t.Fatalf("Error new controller: %v", err)
 	}
 	defer ctrl1.Stop()
 	// Use the same boltdb file without closing the previous controller
-	ctrl2, err := New(cfgOptions)
+	_, err = New(cfgOptions...)
 	if err != nil {
 		t.Fatalf("Local store must support concurrent controllers")
 	}
-	ctrl2.Stop()
 }

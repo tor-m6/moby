@@ -2,13 +2,14 @@ package ns
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
-	"github.com/sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
 )
@@ -38,6 +39,19 @@ func Init() {
 	}
 }
 
+// SetNamespace sets the initial namespace handler
+func SetNamespace() error {
+	initOnce.Do(Init)
+	if err := netns.Set(initNs); err != nil {
+		linkInfo, linkErr := getLink()
+		if linkErr != nil {
+			linkInfo = linkErr.Error()
+		}
+		return fmt.Errorf("failed to set to initial namespace, %v, initns fd %d: %v", linkInfo, initNs, err)
+	}
+	return nil
+}
+
 // ParseHandlerInt transforms the namespace handler into an integer
 func ParseHandlerInt() int {
 	return int(getHandler())
@@ -49,6 +63,10 @@ func getHandler() netns.NsHandle {
 	return initNs
 }
 
+func getLink() (string, error) {
+	return os.Readlink(fmt.Sprintf("/proc/%d/task/%d/ns/net", os.Getpid(), syscall.Gettid()))
+}
+
 // NlHandle returns the netlink handler
 func NlHandle() *netlink.Handle {
 	initOnce.Do(Init)
@@ -58,8 +76,12 @@ func NlHandle() *netlink.Handle {
 func getSupportedNlFamilies() []int {
 	fams := []int{syscall.NETLINK_ROUTE}
 	// NETLINK_XFRM test
-	if err := checkXfrmSocket(); err != nil {
-		logrus.Warnf("Could not load necessary modules for IPSEC rules: %v", err)
+	if err := loadXfrmModules(); err != nil {
+		if checkXfrmSocket() != nil {
+			logrus.Warnf("Could not load necessary modules for IPSEC rules: %v", err)
+		} else {
+			fams = append(fams, syscall.NETLINK_XFRM)
+		}
 	} else {
 		fams = append(fams, syscall.NETLINK_XFRM)
 	}
@@ -75,6 +97,16 @@ func getSupportedNlFamilies() []int {
 	}
 
 	return fams
+}
+
+func loadXfrmModules() error {
+	if out, err := exec.Command("modprobe", "-va", "xfrm_user").CombinedOutput(); err != nil {
+		return fmt.Errorf("Running modprobe xfrm_user failed with message: `%s`, error: %v", strings.TrimSpace(string(out)), err)
+	}
+	if out, err := exec.Command("modprobe", "-va", "xfrm_algo").CombinedOutput(); err != nil {
+		return fmt.Errorf("Running modprobe xfrm_algo failed with message: `%s`, error: %v", strings.TrimSpace(string(out)), err)
+	}
+	return nil
 }
 
 // API check on required xfrm modules (xfrm_user, xfrm_algo)

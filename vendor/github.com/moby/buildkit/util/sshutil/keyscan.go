@@ -1,7 +1,6 @@
 package sshutil
 
 import (
-	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -12,7 +11,7 @@ import (
 
 const defaultPort = 22
 
-var errCallbackDone = errors.New("callback failed on purpose")
+var errCallbackDone = fmt.Errorf("callback failed on purpose")
 
 // addDefaultPort appends a default port if hostport doesn't contain one
 func addDefaultPort(hostport string, defaultPort int) string {

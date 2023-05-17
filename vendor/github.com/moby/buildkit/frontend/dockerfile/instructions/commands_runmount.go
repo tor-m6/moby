@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/docker/go-units"
+	dockeropts "github.com/docker/docker/opts"
 	"github.com/moby/buildkit/util/suggest"
 	"github.com/pkg/errors"
 )
@@ -231,10 +231,11 @@ func parseMount(value string, expander SingleWordExpander) (*Mount, error) {
 			}
 		case "size":
 			if m.Type == "tmpfs" {
-				m.SizeLimit, err = units.RAMInBytes(value)
-				if err != nil {
+				tmpfsSize := new(dockeropts.MemBytes)
+				if err := tmpfsSize.Set(value); err != nil {
 					return nil, errors.Errorf("invalid value for %s: %s", key, value)
 				}
+				m.SizeLimit = tmpfsSize.Value()
 			} else {
 				return nil, errors.Errorf("unexpected key '%s' for mount type '%s'", key, m.Type)
 			}

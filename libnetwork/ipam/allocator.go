@@ -3,57 +3,198 @@ package ipam
 import (
 	"fmt"
 	"net"
-	"net/netip"
-	"strings"
+	"sort"
+	"sync"
 
-	"github.com/docker/docker/libnetwork/bitmap"
-	"github.com/docker/docker/libnetwork/ipamapi"
-	"github.com/docker/docker/libnetwork/ipbits"
-	"github.com/docker/docker/libnetwork/types"
-	"github.com/sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
+	"github.com/docker/libnetwork/bitseq"
+	"github.com/docker/libnetwork/datastore"
+	"github.com/docker/libnetwork/discoverapi"
+	"github.com/docker/libnetwork/ipamapi"
+	"github.com/docker/libnetwork/ipamutils"
+	"github.com/docker/libnetwork/types"
 )
 
 const (
 	localAddressSpace  = "LocalDefault"
 	globalAddressSpace = "GlobalDefault"
+	// The biggest configurable host subnets
+	minNetSize   = 8
+	minNetSizeV6 = 64
+	// datastore keyes for ipam objects
+	dsConfigKey = "ipam/" + ipamapi.DefaultIPAM + "/config"
+	dsDataKey   = "ipam/" + ipamapi.DefaultIPAM + "/data"
 )
 
 // Allocator provides per address space ipv4/ipv6 book keeping
 type Allocator struct {
-	// The address spaces
-	local, global *addrSpace
+	// Predefined pools for default address spaces
+	// Separate from the addrSpace because they should not be serialized
+	predefined             map[string][]*net.IPNet
+	predefinedStartIndices map[string]int
+	// The (potentially serialized) address spaces
+	addrSpaces map[string]*addrSpace
+	// stores        []datastore.Datastore
+	// Allocated addresses in each address space's subnet
+	addresses map[SubnetKey]*bitseq.Handle
+	sync.Mutex
 }
 
 // NewAllocator returns an instance of libnetwork ipam
-func NewAllocator(lcAs, glAs []*net.IPNet) (*Allocator, error) {
-	var (
-		a   Allocator
-		err error
-	)
-	a.local, err = newAddrSpace(lcAs)
-	if err != nil {
-		return nil, fmt.Errorf("could not construct local address space: %w", err)
+func NewAllocator(lcDs, glDs datastore.DataStore) (*Allocator, error) {
+	a := &Allocator{}
+
+	// Load predefined subnet pools
+	a.predefined = map[string][]*net.IPNet{
+		localAddressSpace:  ipamutils.PredefinedBroadNetworks,
+		globalAddressSpace: ipamutils.PredefinedGranularNetworks,
 	}
-	a.global, err = newAddrSpace(glAs)
-	if err != nil {
-		return nil, fmt.Errorf("could not construct global address space: %w", err)
+
+	// Initialize asIndices map
+	a.predefinedStartIndices = make(map[string]int)
+
+	// Initialize bitseq map
+	a.addresses = make(map[SubnetKey]*bitseq.Handle)
+
+	// Initialize address spaces
+	a.addrSpaces = make(map[string]*addrSpace)
+	for _, aspc := range []struct {
+		as string
+		ds datastore.DataStore
+	}{
+		{localAddressSpace, lcDs},
+		{globalAddressSpace, glDs},
+	} {
+		a.initializeAddressSpace(aspc.as, aspc.ds)
 	}
-	return &a, nil
+
+	return a, nil
 }
 
-func newAddrSpace(predefined []*net.IPNet) (*addrSpace, error) {
-	pdf := make([]netip.Prefix, len(predefined))
-	for i, n := range predefined {
-		var ok bool
-		pdf[i], ok = toPrefix(n)
-		if !ok {
-			return nil, fmt.Errorf("network at index %d (%v) is not in canonical form", i, n)
+func (a *Allocator) refresh(as string) error {
+	aSpace, err := a.getAddressSpaceFromStore(as)
+	if err != nil {
+		return types.InternalErrorf("error getting pools config from store: %v", err)
+	}
+
+	if aSpace == nil {
+		return nil
+	}
+
+	a.Lock()
+	a.addrSpaces[as] = aSpace
+	a.Unlock()
+
+	return nil
+}
+
+func (a *Allocator) updateBitMasks(aSpace *addrSpace) error {
+	var inserterList []func() error
+
+	aSpace.Lock()
+	for k, v := range aSpace.subnets {
+		if v.Range == nil {
+			kk := k
+			vv := v
+			inserterList = append(inserterList, func() error { return a.insertBitMask(kk, vv.Pool) })
 		}
 	}
-	return &addrSpace{
-		subnets:    map[netip.Prefix]*PoolData{},
-		predefined: pdf,
-	}, nil
+	aSpace.Unlock()
+
+	// Add the bitmasks (data could come from datastore)
+	if inserterList != nil {
+		for _, f := range inserterList {
+			if err := f(); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// Checks for and fixes damaged bitmask.
+func (a *Allocator) checkConsistency(as string) {
+	var sKeyList []SubnetKey
+
+	// Retrieve this address space's configuration and bitmasks from the datastore
+	a.refresh(as)
+	a.Lock()
+	aSpace, ok := a.addrSpaces[as]
+	a.Unlock()
+	if !ok {
+		return
+	}
+	a.updateBitMasks(aSpace)
+
+	aSpace.Lock()
+	for sk, pd := range aSpace.subnets {
+		if pd.Range != nil {
+			continue
+		}
+		sKeyList = append(sKeyList, sk)
+	}
+	aSpace.Unlock()
+
+	for _, sk := range sKeyList {
+		a.Lock()
+		bm := a.addresses[sk]
+		a.Unlock()
+		if err := bm.CheckConsistency(); err != nil {
+			logrus.Warnf("Error while running consistency check for %s: %v", sk, err)
+		}
+	}
+}
+
+func (a *Allocator) initializeAddressSpace(as string, ds datastore.DataStore) error {
+	scope := ""
+	if ds != nil {
+		scope = ds.Scope()
+	}
+
+	a.Lock()
+	if currAS, ok := a.addrSpaces[as]; ok {
+		if currAS.ds != nil {
+			a.Unlock()
+			return types.ForbiddenErrorf("a datastore is already configured for the address space %s", as)
+		}
+	}
+	a.addrSpaces[as] = &addrSpace{
+		subnets: map[SubnetKey]*PoolData{},
+		id:      dsConfigKey + "/" + as,
+		scope:   scope,
+		ds:      ds,
+		alloc:   a,
+	}
+	a.Unlock()
+
+	a.checkConsistency(as)
+
+	return nil
+}
+
+// DiscoverNew informs the allocator about a new global scope datastore
+func (a *Allocator) DiscoverNew(dType discoverapi.DiscoveryType, data interface{}) error {
+	if dType != discoverapi.DatastoreConfig {
+		return nil
+	}
+
+	dsc, ok := data.(discoverapi.DatastoreConfigData)
+	if !ok {
+		return types.InternalErrorf("incorrect data in datastore update notification: %v", data)
+	}
+
+	ds, err := datastore.NewDataStoreFromConfig(dsc)
+	if err != nil {
+		return err
+	}
+
+	return a.initializeAddressSpace(globalAddressSpace, ds)
+}
+
+// DiscoverDelete is a notification of no interest for the allocator
+func (a *Allocator) DiscoverDelete(dType discoverapi.DiscoveryType, data interface{}) error {
+	return nil
 }
 
 // GetDefaultAddressSpaces returns the local and global default address spaces
@@ -62,64 +203,64 @@ func (a *Allocator) GetDefaultAddressSpaces() (string, string, error) {
 }
 
 // RequestPool returns an address pool along with its unique id.
-// addressSpace must be a valid address space name and must not be the empty string.
-// If pool is the empty string then the default predefined pool for addressSpace will be used, otherwise pool must be a valid IP address and length in CIDR notation.
-// If subPool is not empty, it must be a valid IP address and length in CIDR notation which is a sub-range of pool.
-// subPool must be empty if pool is empty.
 func (a *Allocator) RequestPool(addressSpace, pool, subPool string, options map[string]string, v6 bool) (string, *net.IPNet, map[string]string, error) {
 	logrus.Debugf("RequestPool(%s, %s, %s, %v, %t)", addressSpace, pool, subPool, options, v6)
 
-	parseErr := func(err error) (string, *net.IPNet, map[string]string, error) {
+	k, nw, ipr, err := a.parsePoolRequest(addressSpace, pool, subPool, v6)
+	if err != nil {
 		return "", nil, nil, types.InternalErrorf("failed to parse pool request for address space %q pool %q subpool %q: %v", addressSpace, pool, subPool, err)
 	}
 
-	if addressSpace == "" {
-		return parseErr(ipamapi.ErrInvalidAddressSpace)
+	pdf := k == nil
+
+retry:
+	if pdf {
+		if nw, err = a.getPredefinedPool(addressSpace, v6); err != nil {
+			return "", nil, nil, err
+		}
+		k = &SubnetKey{AddressSpace: addressSpace, Subnet: nw.String()}
 	}
+
+	if err := a.refresh(addressSpace); err != nil {
+		return "", nil, nil, err
+	}
+
 	aSpace, err := a.getAddrSpace(addressSpace)
 	if err != nil {
 		return "", nil, nil, err
 	}
-	k := PoolID{AddressSpace: addressSpace}
 
-	if pool == "" {
-		if subPool != "" {
-			return parseErr(ipamapi.ErrInvalidSubPool)
-		}
-		k.Subnet, err = aSpace.allocatePredefinedPool(v6)
-		if err != nil {
-			return "", nil, nil, err
-		}
-		return k.String(), toIPNet(k.Subnet), nil, nil
-	}
-
-	if k.Subnet, err = netip.ParsePrefix(pool); err != nil {
-		return parseErr(ipamapi.ErrInvalidPool)
-	}
-
-	if subPool != "" {
-		var err error
-		k.ChildSubnet, err = netip.ParsePrefix(subPool)
-		if err != nil {
-			return parseErr(ipamapi.ErrInvalidSubPool)
-		}
-	}
-
-	k.Subnet, k.ChildSubnet = k.Subnet.Masked(), k.ChildSubnet.Masked()
-	err = aSpace.allocateSubnet(k.Subnet, k.ChildSubnet)
+	insert, err := aSpace.updatePoolDBOnAdd(*k, nw, ipr, pdf)
 	if err != nil {
+		if _, ok := err.(types.MaskableError); ok {
+			logrus.Debugf("Retrying predefined pool search: %v", err)
+			goto retry
+		}
 		return "", nil, nil, err
 	}
 
-	return k.String(), toIPNet(k.Subnet), nil, nil
+	if err := a.writeToStore(aSpace); err != nil {
+		if _, ok := err.(types.RetryError); !ok {
+			return "", nil, nil, types.InternalErrorf("pool configuration failed because of %s", err.Error())
+		}
+
+		goto retry
+	}
+
+	return k.String(), nw, nil, insert()
 }
 
 // ReleasePool releases the address pool identified by the passed id
 func (a *Allocator) ReleasePool(poolID string) error {
 	logrus.Debugf("ReleasePool(%s)", poolID)
-	k := PoolID{}
+	k := SubnetKey{}
 	if err := k.FromString(poolID); err != nil {
 		return types.BadRequestErrorf("invalid pool id: %s", poolID)
+	}
+
+retry:
+	if err := a.refresh(k.AddressSpace); err != nil {
+		return err
 	}
 
 	aSpace, err := a.getAddrSpace(k.AddressSpace)
@@ -127,168 +268,245 @@ func (a *Allocator) ReleasePool(poolID string) error {
 		return err
 	}
 
-	return aSpace.releaseSubnet(k.Subnet, k.ChildSubnet)
-}
-
-// Given the address space, returns the local or global PoolConfig based on whether the
-// address space is local or global. AddressSpace locality is registered with IPAM out of band.
-func (a *Allocator) getAddrSpace(as string) (*addrSpace, error) {
-	switch as {
-	case localAddressSpace:
-		return a.local, nil
-	case globalAddressSpace:
-		return a.global, nil
+	remove, err := aSpace.updatePoolDBOnRemoval(k)
+	if err != nil {
+		return err
 	}
-	return nil, types.BadRequestErrorf("cannot find address space %s", as)
+
+	if err = a.writeToStore(aSpace); err != nil {
+		if _, ok := err.(types.RetryError); !ok {
+			return types.InternalErrorf("pool (%s) removal failed because of %v", poolID, err)
+		}
+		goto retry
+	}
+
+	return remove()
 }
 
-func newPoolData(pool netip.Prefix) *PoolData {
-	ones, bits := pool.Bits(), pool.Addr().BitLen()
+// Given the address space, returns the local or global PoolConfig based on the
+// address space is local or global. AddressSpace locality is being registered with IPAM out of band.
+func (a *Allocator) getAddrSpace(as string) (*addrSpace, error) {
+	a.Lock()
+	defer a.Unlock()
+	aSpace, ok := a.addrSpaces[as]
+	if !ok {
+		return nil, types.BadRequestErrorf("cannot find address space %s (most likely the backing datastore is not configured)", as)
+	}
+	return aSpace, nil
+}
+
+func (a *Allocator) parsePoolRequest(addressSpace, pool, subPool string, v6 bool) (*SubnetKey, *net.IPNet, *AddressRange, error) {
+	var (
+		nw  *net.IPNet
+		ipr *AddressRange
+		err error
+	)
+
+	if addressSpace == "" {
+		return nil, nil, nil, ipamapi.ErrInvalidAddressSpace
+	}
+
+	if pool == "" && subPool != "" {
+		return nil, nil, nil, ipamapi.ErrInvalidSubPool
+	}
+
+	if pool == "" {
+		return nil, nil, nil, nil
+	}
+
+	if _, nw, err = net.ParseCIDR(pool); err != nil {
+		return nil, nil, nil, ipamapi.ErrInvalidPool
+	}
+
+	if subPool != "" {
+		if ipr, err = getAddressRange(subPool, nw); err != nil {
+			return nil, nil, nil, err
+		}
+	}
+
+	return &SubnetKey{AddressSpace: addressSpace, Subnet: nw.String(), ChildSubnet: subPool}, nw, ipr, nil
+}
+
+func (a *Allocator) insertBitMask(key SubnetKey, pool *net.IPNet) error {
+	//logrus.Debugf("Inserting bitmask (%s, %s)", key.String(), pool.String())
+
+	store := a.getStore(key.AddressSpace)
+	ipVer := getAddressVersion(pool.IP)
+	ones, bits := pool.Mask.Size()
 	numAddresses := uint64(1 << uint(bits-ones))
 
 	// Allow /64 subnet
-	if pool.Addr().Is6() && numAddresses == 0 {
+	if ipVer == v6 && numAddresses == 0 {
 		numAddresses--
 	}
 
-	// Generate the new address masks.
-	h := bitmap.New(numAddresses)
-
-	// Pre-reserve the network address on IPv4 networks large
-	// enough to have one (i.e., anything bigger than a /31.
-	if !(pool.Addr().Is4() && numAddresses <= 2) {
-		h.Set(0)
+	// Generate the new address masks. AddressMask content may come from datastore
+	h, err := bitseq.NewHandle(dsDataKey, store, key.String(), numAddresses)
+	if err != nil {
+		return err
 	}
 
-	// Pre-reserve the broadcast address on IPv4 networks large
-	// enough to have one (i.e., anything bigger than a /31).
-	if pool.Addr().Is4() && numAddresses > 2 {
+	// Do not let network identifier address be reserved
+	// Do the same for IPv6 so that bridge ip starts with XXXX...::1
+	h.Set(0)
+
+	// Do not let broadcast address be reserved
+	if ipVer == v4 {
 		h.Set(numAddresses - 1)
 	}
 
-	return &PoolData{addrs: h, children: map[netip.Prefix]struct{}{}}
+	a.Lock()
+	a.addresses[key] = h
+	a.Unlock()
+	return nil
 }
 
-// getPredefineds returns the predefined subnets for the address space.
-//
-// It should not be called concurrently with any other method on the addrSpace.
-func (aSpace *addrSpace) getPredefineds() []netip.Prefix {
-	i := aSpace.predefinedStartIndex
+func (a *Allocator) retrieveBitmask(k SubnetKey, n *net.IPNet) (*bitseq.Handle, error) {
+	a.Lock()
+	bm, ok := a.addresses[k]
+	a.Unlock()
+	if !ok {
+		logrus.Debugf("Retrieving bitmask (%s, %s)", k.String(), n.String())
+		if err := a.insertBitMask(k, n); err != nil {
+			return nil, types.InternalErrorf("could not find bitmask in datastore for %s", k.String())
+		}
+		a.Lock()
+		bm = a.addresses[k]
+		a.Unlock()
+	}
+	return bm, nil
+}
+
+func (a *Allocator) getPredefineds(as string) []*net.IPNet {
+	a.Lock()
+	defer a.Unlock()
+
+	p := a.predefined[as]
+	i := a.predefinedStartIndices[as]
 	// defensive in case the list changed since last update
-	if i >= len(aSpace.predefined) {
+	if i >= len(p) {
 		i = 0
 	}
-	return append(aSpace.predefined[i:], aSpace.predefined[:i]...)
+	return append(p[i:], p[:i]...)
 }
 
-// updatePredefinedStartIndex rotates the predefined subnet list by amt.
-//
-// It should not be called concurrently with any other method on the addrSpace.
-func (aSpace *addrSpace) updatePredefinedStartIndex(amt int) {
-	i := aSpace.predefinedStartIndex + amt
-	if i < 0 || i >= len(aSpace.predefined) {
+func (a *Allocator) updateStartIndex(as string, amt int) {
+	a.Lock()
+	i := a.predefinedStartIndices[as] + amt
+	if i < 0 || i >= len(a.predefined[as]) {
 		i = 0
 	}
-	aSpace.predefinedStartIndex = i
+	a.predefinedStartIndices[as] = i
+	a.Unlock()
 }
 
-func (aSpace *addrSpace) allocatePredefinedPool(ipV6 bool) (netip.Prefix, error) {
+func (a *Allocator) getPredefinedPool(as string, ipV6 bool) (*net.IPNet, error) {
+	var v ipVersion
+	v = v4
+	if ipV6 {
+		v = v6
+	}
+
+	if as != localAddressSpace && as != globalAddressSpace {
+		return nil, types.NotImplementedErrorf("no default pool availbale for non-default addresss spaces")
+	}
+
+	aSpace, err := a.getAddrSpace(as)
+	if err != nil {
+		return nil, err
+	}
+
+	predefined := a.getPredefineds(as)
+
 	aSpace.Lock()
-	defer aSpace.Unlock()
-
-	for i, nw := range aSpace.getPredefineds() {
-		if ipV6 != nw.Addr().Is6() {
+	for i, nw := range predefined {
+		if v != getAddressVersion(nw.IP) {
 			continue
 		}
 		// Checks whether pool has already been allocated
-		if _, ok := aSpace.subnets[nw]; ok {
+		if _, ok := aSpace.subnets[SubnetKey{AddressSpace: as, Subnet: nw.String()}]; ok {
 			continue
 		}
 		// Shouldn't be necessary, but check prevents IP collisions should
 		// predefined pools overlap for any reason.
-		if !aSpace.contains(nw) {
-			aSpace.updatePredefinedStartIndex(i + 1)
-			err := aSpace.allocateSubnetL(nw, netip.Prefix{})
-			if err != nil {
-				return netip.Prefix{}, err
-			}
+		if !aSpace.contains(as, nw) {
+			aSpace.Unlock()
+			a.updateStartIndex(as, i+1)
 			return nw, nil
 		}
 	}
+	aSpace.Unlock()
 
-	v := 4
-	if ipV6 {
-		v = 6
-	}
-	return netip.Prefix{}, types.NotFoundErrorf("could not find an available, non-overlapping IPv%d address pool among the defaults to assign to the network", v)
+	return nil, types.NotFoundErrorf("could not find an available, non-overlapping IPv%d address pool among the defaults to assign to the network", v)
 }
 
 // RequestAddress returns an address from the specified pool ID
 func (a *Allocator) RequestAddress(poolID string, prefAddress net.IP, opts map[string]string) (*net.IPNet, map[string]string, error) {
 	logrus.Debugf("RequestAddress(%s, %v, %v)", poolID, prefAddress, opts)
-	k := PoolID{}
+	k := SubnetKey{}
 	if err := k.FromString(poolID); err != nil {
 		return nil, nil, types.BadRequestErrorf("invalid pool id: %s", poolID)
+	}
+
+	if err := a.refresh(k.AddressSpace); err != nil {
+		return nil, nil, err
 	}
 
 	aSpace, err := a.getAddrSpace(k.AddressSpace)
 	if err != nil {
 		return nil, nil, err
 	}
-	var pref netip.Addr
-	if prefAddress != nil {
-		var ok bool
-		pref, ok = netip.AddrFromSlice(prefAddress)
-		if !ok {
-			return nil, nil, types.BadRequestErrorf("invalid preferred address: %v", prefAddress)
+
+	aSpace.Lock()
+	p, ok := aSpace.subnets[k]
+	if !ok {
+		aSpace.Unlock()
+		return nil, nil, types.NotFoundErrorf("cannot find address pool for poolID:%s", poolID)
+	}
+
+	if prefAddress != nil && !p.Pool.Contains(prefAddress) {
+		aSpace.Unlock()
+		return nil, nil, ipamapi.ErrIPOutOfRange
+	}
+
+	c := p
+	for c.Range != nil {
+		k = c.ParentKey
+		c = aSpace.subnets[k]
+	}
+	aSpace.Unlock()
+
+	bm, err := a.retrieveBitmask(k, c.Pool)
+	if err != nil {
+		return nil, nil, types.InternalErrorf("could not find bitmask in datastore for %s on address %v request from pool %s: %v",
+			k.String(), prefAddress, poolID, err)
+	}
+	// In order to request for a serial ip address allocation, callers can pass in the option to request
+	// IP allocation serially or first available IP in the subnet
+	var serial bool
+	if opts != nil {
+		if val, ok := opts[ipamapi.AllocSerialPrefix]; ok {
+			serial = (val == "true")
 		}
 	}
-	p, err := aSpace.requestAddress(k.Subnet, k.ChildSubnet, pref.Unmap(), opts)
+	ip, err := a.getAddress(p.Pool, bm, prefAddress, p.Range, serial)
 	if err != nil {
 		return nil, nil, err
 	}
-	return &net.IPNet{
-		IP:   p.AsSlice(),
-		Mask: net.CIDRMask(k.Subnet.Bits(), k.Subnet.Addr().BitLen()),
-	}, nil, nil
-}
 
-func (aSpace *addrSpace) requestAddress(nw, sub netip.Prefix, prefAddress netip.Addr, opts map[string]string) (netip.Addr, error) {
-	aSpace.Lock()
-	defer aSpace.Unlock()
-
-	p, ok := aSpace.subnets[nw]
-	if !ok {
-		return netip.Addr{}, types.NotFoundErrorf("cannot find address pool for poolID:%v/%v", nw, sub)
-	}
-
-	if prefAddress != (netip.Addr{}) && !nw.Contains(prefAddress) {
-		return netip.Addr{}, ipamapi.ErrIPOutOfRange
-	}
-
-	if sub != (netip.Prefix{}) {
-		if _, ok := p.children[sub]; !ok {
-			return netip.Addr{}, types.NotFoundErrorf("cannot find address pool for poolID:%v/%v", nw, sub)
-		}
-	}
-
-	// In order to request for a serial ip address allocation, callers can pass in the option to request
-	// IP allocation serially or first available IP in the subnet
-	serial := opts[ipamapi.AllocSerialPrefix] == "true"
-	ip, err := getAddress(nw, p.addrs, prefAddress, sub, serial)
-	if err != nil {
-		return netip.Addr{}, err
-	}
-
-	return ip, nil
+	return &net.IPNet{IP: ip, Mask: p.Pool.Mask}, nil, nil
 }
 
 // ReleaseAddress releases the address from the specified pool ID
 func (a *Allocator) ReleaseAddress(poolID string, address net.IP) error {
 	logrus.Debugf("ReleaseAddress(%s, %v)", poolID, address)
-	k := PoolID{}
+	k := SubnetKey{}
 	if err := k.FromString(poolID); err != nil {
 		return types.BadRequestErrorf("invalid pool id: %s", poolID)
+	}
+
+	if err := a.refresh(k.AddressSpace); err != nil {
+		return err
 	}
 
 	aSpace, err := a.getAddrSpace(k.AddressSpace)
@@ -296,103 +514,117 @@ func (a *Allocator) ReleaseAddress(poolID string, address net.IP) error {
 		return err
 	}
 
-	addr, ok := netip.AddrFromSlice(address)
-	if !ok {
-		return types.BadRequestErrorf("invalid address: %v", address)
-	}
-
-	return aSpace.releaseAddress(k.Subnet, k.ChildSubnet, addr.Unmap())
-}
-
-func (aSpace *addrSpace) releaseAddress(nw, sub netip.Prefix, address netip.Addr) error {
 	aSpace.Lock()
-	defer aSpace.Unlock()
-
-	p, ok := aSpace.subnets[nw]
+	p, ok := aSpace.subnets[k]
 	if !ok {
-		return types.NotFoundErrorf("cannot find address pool for %v/%v", nw, sub)
-	}
-	if sub != (netip.Prefix{}) {
-		if _, ok := p.children[sub]; !ok {
-			return types.NotFoundErrorf("cannot find address pool for poolID:%v/%v", nw, sub)
-		}
+		aSpace.Unlock()
+		return types.NotFoundErrorf("cannot find address pool for poolID:%s", poolID)
 	}
 
-	if !address.IsValid() {
-		return types.BadRequestErrorf("invalid address")
+	if address == nil {
+		aSpace.Unlock()
+		return types.BadRequestErrorf("invalid address: nil")
 	}
 
-	if !nw.Contains(address) {
+	if !p.Pool.Contains(address) {
+		aSpace.Unlock()
 		return ipamapi.ErrIPOutOfRange
 	}
 
-	defer logrus.Debugf("Released address Address:%v Sequence:%s", address, p.addrs)
+	c := p
+	for c.Range != nil {
+		k = c.ParentKey
+		c = aSpace.subnets[k]
+	}
+	aSpace.Unlock()
 
-	return p.addrs.Unset(hostID(address, uint(nw.Bits())))
+	mask := p.Pool.Mask
+
+	h, err := types.GetHostPartIP(address, mask)
+	if err != nil {
+		return types.InternalErrorf("failed to release address %s: %v", address.String(), err)
+	}
+
+	bm, err := a.retrieveBitmask(k, c.Pool)
+	if err != nil {
+		return types.InternalErrorf("could not find bitmask in datastore for %s on address %v release from pool %s: %v",
+			k.String(), address, poolID, err)
+	}
+
+	return bm.Unset(ipToUint64(h))
 }
 
-func getAddress(base netip.Prefix, bitmask *bitmap.Bitmap, prefAddress netip.Addr, ipr netip.Prefix, serial bool) (netip.Addr, error) {
+func (a *Allocator) getAddress(nw *net.IPNet, bitmask *bitseq.Handle, prefAddress net.IP, ipr *AddressRange, serial bool) (net.IP, error) {
 	var (
 		ordinal uint64
 		err     error
+		base    *net.IPNet
 	)
 
-	logrus.Debugf("Request address PoolID:%v %s Serial:%v PrefAddress:%v ", base, bitmask, serial, prefAddress)
+	base = types.GetIPNetCopy(nw)
 
-	if bitmask.Unselected() == 0 {
-		return netip.Addr{}, ipamapi.ErrNoAvailableIPs
+	if bitmask.Unselected() <= 0 {
+		return nil, ipamapi.ErrNoAvailableIPs
 	}
-	if ipr == (netip.Prefix{}) && prefAddress == (netip.Addr{}) {
+	if ipr == nil && prefAddress == nil {
 		ordinal, err = bitmask.SetAny(serial)
-	} else if prefAddress != (netip.Addr{}) {
-		ordinal = hostID(prefAddress, uint(base.Bits()))
+	} else if prefAddress != nil {
+		hostPart, e := types.GetHostPartIP(prefAddress, base.Mask)
+		if e != nil {
+			return nil, types.InternalErrorf("failed to allocate requested address %s: %v", prefAddress.String(), e)
+		}
+		ordinal = ipToUint64(types.GetMinimalIP(hostPart))
 		err = bitmask.Set(ordinal)
 	} else {
-		start, end := subnetRange(base, ipr)
-		ordinal, err = bitmask.SetAnyInRange(start, end, serial)
+		ordinal, err = bitmask.SetAnyInRange(ipr.Start, ipr.End, serial)
 	}
 
 	switch err {
 	case nil:
 		// Convert IP ordinal for this subnet into IP address
-		return ipbits.Add(base.Addr(), ordinal, 0), nil
-	case bitmap.ErrBitAllocated:
-		return netip.Addr{}, ipamapi.ErrIPAlreadyAllocated
-	case bitmap.ErrNoBitAvailable:
-		return netip.Addr{}, ipamapi.ErrNoAvailableIPs
+		return generateAddress(ordinal, base), nil
+	case bitseq.ErrBitAllocated:
+		return nil, ipamapi.ErrIPAlreadyAllocated
+	case bitseq.ErrNoBitAvailable:
+		return nil, ipamapi.ErrNoAvailableIPs
 	default:
-		return netip.Addr{}, err
+		return nil, err
 	}
 }
 
 // DumpDatabase dumps the internal info
 func (a *Allocator) DumpDatabase() string {
-	aspaces := map[string]*addrSpace{
-		localAddressSpace:  a.local,
-		globalAddressSpace: a.global,
+	a.Lock()
+	aspaces := make(map[string]*addrSpace, len(a.addrSpaces))
+	orderedAS := make([]string, 0, len(a.addrSpaces))
+	for as, aSpace := range a.addrSpaces {
+		orderedAS = append(orderedAS, as)
+		aspaces[as] = aSpace
 	}
+	a.Unlock()
 
-	var b strings.Builder
-	for _, as := range []string{localAddressSpace, globalAddressSpace} {
-		fmt.Fprintf(&b, "\n### %s\n", as)
-		b.WriteString(aspaces[as].DumpDatabase())
-	}
-	return b.String()
-}
+	sort.Strings(orderedAS)
 
-func (aSpace *addrSpace) DumpDatabase() string {
-	aSpace.Lock()
-	defer aSpace.Unlock()
-
-	var b strings.Builder
-	for k, config := range aSpace.subnets {
-		fmt.Fprintf(&b, "%v: %v\n", k, config)
-		fmt.Fprintf(&b, "  Bitmap: %v\n", config.addrs)
-		for k := range config.children {
-			fmt.Fprintf(&b, "  - Subpool: %v\n", k)
+	var s string
+	for _, as := range orderedAS {
+		aSpace := aspaces[as]
+		s = fmt.Sprintf("\n\n%s Config", as)
+		aSpace.Lock()
+		for k, config := range aSpace.subnets {
+			s += fmt.Sprintf("\n%v: %v", k, config)
+			if config.Range == nil {
+				a.retrieveBitmask(k, config.Pool)
+			}
 		}
+		aSpace.Unlock()
 	}
-	return b.String()
+
+	s = fmt.Sprintf("%s\n\nBitmasks", s)
+	for k, bm := range a.addresses {
+		s += fmt.Sprintf("\n%s: %s", k, bm)
+	}
+
+	return s
 }
 
 // IsBuiltIn returns true for builtin drivers

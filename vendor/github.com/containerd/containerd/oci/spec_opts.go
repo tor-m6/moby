@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"io/ioutil"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -158,7 +159,7 @@ func WithSpecFromBytes(p []byte) SpecOpts {
 // WithSpecFromFile loads the specification from the provided filename.
 func WithSpecFromFile(filename string) SpecOpts {
 	return func(ctx context.Context, c Client, container *containers.Container, s *Spec) error {
-		p, err := os.ReadFile(filename)
+		p, err := ioutil.ReadFile(filename)
 		if err != nil {
 			return fmt.Errorf("cannot load spec config file: %w", err)
 		}

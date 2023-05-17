@@ -5,6 +5,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"github.com/docker/docker/mystrings"
 	"time"
 )
 
@@ -59,7 +60,7 @@ func (info *Info) ExtraAttributes(keyMod func(string) string) (map[string]string
 
 	envMapping := make(map[string]string)
 	for _, e := range info.ContainerEnv {
-		if k, v, ok := strings.Cut(e, "="); ok {
+		if k, v, ok := mystrings.Cut(e, "="); ok {
 			envMapping[k] = v
 		}
 	}

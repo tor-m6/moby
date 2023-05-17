@@ -1,12 +1,13 @@
 package libnetwork
 
 import (
+	"container/heap"
 	"encoding/json"
 	"sync"
 
-	"github.com/docker/docker/libnetwork/datastore"
-	"github.com/docker/docker/libnetwork/osl"
-	"github.com/sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
+	"github.com/docker/libnetwork/datastore"
+	"github.com/docker/libnetwork/osl"
 )
 
 const (
@@ -21,7 +22,7 @@ type epState struct {
 type sbState struct {
 	ID         string
 	Cid        string
-	c          *Controller
+	c          *controller
 	dbIndex    uint64
 	dbExists   bool
 	Eps        []epState
@@ -55,11 +56,12 @@ func (sbs *sbState) SetValue(value []byte) error {
 }
 
 func (sbs *sbState) Index() uint64 {
-	sb, err := sbs.c.SandboxByID(sbs.ID)
+	sbi, err := sbs.c.SandboxByID(sbs.ID)
 	if err != nil {
 		return sbs.dbIndex
 	}
 
+	sb := sbi.(*sandbox)
 	maxIndex := sb.dbIndex
 	if sbs.dbIndex > maxIndex {
 		maxIndex = sbs.dbIndex
@@ -72,11 +74,12 @@ func (sbs *sbState) SetIndex(index uint64) {
 	sbs.dbIndex = index
 	sbs.dbExists = true
 
-	sb, err := sbs.c.SandboxByID(sbs.ID)
+	sbi, err := sbs.c.SandboxByID(sbs.ID)
 	if err != nil {
 		return
 	}
 
+	sb := sbi.(*sandbox)
 	sb.dbIndex = index
 	sb.dbExists = true
 }
@@ -86,11 +89,12 @@ func (sbs *sbState) Exists() bool {
 		return sbs.dbExists
 	}
 
-	sb, err := sbs.c.SandboxByID(sbs.ID)
+	sbi, err := sbs.c.SandboxByID(sbs.ID)
 	if err != nil {
 		return false
 	}
 
+	sb := sbi.(*sandbox)
 	return sb.dbExists
 }
 
@@ -132,7 +136,7 @@ func (sbs *sbState) DataScope() string {
 	return datastore.LocalScope
 }
 
-func (sb *Sandbox) storeUpdate() error {
+func (sb *sandbox) storeUpdate() error {
 	sbs := &sbState{
 		c:          sb.controller,
 		ID:         sb.id,
@@ -147,7 +151,7 @@ func (sb *Sandbox) storeUpdate() error {
 
 retry:
 	sbs.Eps = nil
-	for _, ep := range sb.Endpoints() {
+	for _, ep := range sb.getConnectedEndpoints() {
 		// If the endpoint is not persisted then do not add it to
 		// the sandbox checkpoint
 		if ep.Skip() {
@@ -174,7 +178,7 @@ retry:
 	return err
 }
 
-func (sb *Sandbox) storeDelete() error {
+func (sb *sandbox) storeDelete() error {
 	sbs := &sbState{
 		c:        sb.controller,
 		ID:       sb.id,
@@ -186,8 +190,8 @@ func (sb *Sandbox) storeDelete() error {
 	return sb.controller.deleteFromStore(sbs)
 }
 
-func (c *Controller) sandboxCleanup(activeSandboxes map[string]interface{}) {
-	store := c.getStore()
+func (c *controller) sandboxCleanup(activeSandboxes map[string]interface{}) {
+	store := c.getStore(datastore.LocalScope)
 	if store == nil {
 		logrus.Error("Could not find local scope store while trying to cleanup sandboxes")
 		return
@@ -207,11 +211,11 @@ func (c *Controller) sandboxCleanup(activeSandboxes map[string]interface{}) {
 	for _, kvo := range kvol {
 		sbs := kvo.(*sbState)
 
-		sb := &Sandbox{
+		sb := &sandbox{
 			id:                 sbs.ID,
 			controller:         sbs.c,
 			containerID:        sbs.Cid,
-			endpoints:          []*Endpoint{},
+			endpoints:          epHeap{},
 			populatedEndpoints: map[string]struct{}{},
 			dbIndex:            sbs.dbIndex,
 			isStub:             true,
@@ -238,36 +242,37 @@ func (c *Controller) sandboxCleanup(activeSandboxes map[string]interface{}) {
 			sb.processOptions(opts...)
 			sb.restorePath()
 			create = !sb.config.useDefaultSandBox
+			heap.Init(&sb.endpoints)
 		}
 		sb.osSbox, err = osl.NewSandbox(sb.Key(), create, isRestore)
 		if err != nil {
-			logrus.Errorf("failed to create osl sandbox while trying to restore sandbox %.7s%s: %v", sb.ID(), msg, err)
+			logrus.Errorf("failed to create osl sandbox while trying to restore sandbox %s%s: %v", sb.ID()[0:7], msg, err)
 			continue
 		}
 
-		c.mu.Lock()
+		c.Lock()
 		c.sandboxes[sb.id] = sb
-		c.mu.Unlock()
+		c.Unlock()
 
 		for _, eps := range sbs.Eps {
 			n, err := c.getNetworkFromStore(eps.Nid)
-			var ep *Endpoint
+			var ep *endpoint
 			if err != nil {
 				logrus.Errorf("getNetworkFromStore for nid %s failed while trying to build sandbox for cleanup: %v", eps.Nid, err)
 				n = &network{id: eps.Nid, ctrlr: c, drvOnce: &sync.Once{}, persist: true}
-				ep = &Endpoint{id: eps.Eid, network: n, sandboxID: sbs.ID}
+				ep = &endpoint{id: eps.Eid, network: n, sandboxID: sbs.ID}
 			} else {
 				ep, err = n.getEndpointFromStore(eps.Eid)
 				if err != nil {
 					logrus.Errorf("getEndpointFromStore for eid %s failed while trying to build sandbox for cleanup: %v", eps.Eid, err)
-					ep = &Endpoint{id: eps.Eid, network: n, sandboxID: sbs.ID}
+					ep = &endpoint{id: eps.Eid, network: n, sandboxID: sbs.ID}
 				}
 			}
 			if _, ok := activeSandboxes[sb.ID()]; ok && err != nil {
 				logrus.Errorf("failed to restore endpoint %s in %s for container %s due to %v", eps.Eid, eps.Nid, sb.ContainerID(), err)
 				continue
 			}
-			sb.addEndpoint(ep)
+			heap.Push(&sb.endpoints, ep)
 		}
 
 		if _, ok := activeSandboxes[sb.ID()]; !ok {

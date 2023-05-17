@@ -4,8 +4,6 @@
 package network
 
 import (
-	"context"
-
 	"github.com/containerd/containerd/oci"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 )
@@ -17,12 +15,8 @@ func NewHostProvider() Provider {
 type host struct {
 }
 
-func (h *host) New(_ context.Context, hostname string) (Namespace, error) {
+func (h *host) New() (Namespace, error) {
 	return &hostNS{}, nil
-}
-
-func (h *host) Close() error {
-	return nil
 }
 
 type hostNS struct {

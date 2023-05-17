@@ -1,9 +1,10 @@
 package plugin // import "github.com/docker/docker/plugin"
 
 import (
-	"strings"
+	// "strings"
 	"sync"
 
+	"github.com/docker/docker/mystrings"
 	"github.com/docker/docker/pkg/plugins"
 	v2 "github.com/docker/docker/plugin/v2"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
@@ -55,7 +56,7 @@ func WithEnv(env []string) CreateOpt {
 			}
 		}
 		for _, line := range env {
-			if k, v, ok := strings.Cut(line, "="); ok {
+			if k, v, ok := mystrings.Cut(line, "="); ok {
 				effectiveEnv[k] = v
 			}
 		}

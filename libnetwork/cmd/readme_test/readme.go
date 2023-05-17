@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/docker/docker/libnetwork"
-	"github.com/docker/docker/libnetwork/config"
-	"github.com/docker/docker/libnetwork/netlabel"
-	"github.com/docker/docker/libnetwork/options"
 	"github.com/docker/docker/pkg/reexec"
+	"github.com/docker/libnetwork"
+	"github.com/docker/libnetwork/config"
+	"github.com/docker/libnetwork/netlabel"
+	"github.com/docker/libnetwork/options"
 )
 
 func main() {
@@ -48,7 +48,7 @@ func main() {
 	// NewSandbox accepts Variadic optional arguments which libnetwork can use.
 	sbx, err := controller.NewSandbox("container1",
 		libnetwork.OptionHostname("test"),
-		libnetwork.OptionDomainname("example.com"))
+		libnetwork.OptionDomainname("docker.io"))
 	if err != nil {
 		log.Fatalf("controller.NewSandbox: %s", err)
 	}

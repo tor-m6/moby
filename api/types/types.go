@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"github.com/docker/docker/mystrings"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -349,7 +350,7 @@ func DecodeSecurityOptions(opts []string) ([]SecurityOpt, error) {
 		}
 		secopt := SecurityOpt{}
 		for _, s := range strings.Split(opt, ",") {
-			k, v, ok := strings.Cut(s, "=")
+			k, v, ok := mystrings.Cut(s, "=")
 			if !ok {
 				return nil, fmt.Errorf("invalid security option %q", s)
 			}

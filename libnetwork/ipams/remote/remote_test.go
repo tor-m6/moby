@@ -4,16 +4,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
-	"runtime"
 	"testing"
 
-	"github.com/docker/docker/libnetwork/ipamapi"
 	"github.com/docker/docker/pkg/plugins"
+	"github.com/docker/libnetwork/ipamapi"
+	_ "github.com/docker/libnetwork/testutils"
 )
 
 func decodeToMap(r *http.Request) (res map[string]interface{}, err error) {
@@ -36,27 +36,16 @@ func handle(t *testing.T, mux *http.ServeMux, method string, h func(map[string]i
 }
 
 func setupPlugin(t *testing.T, name string, mux *http.ServeMux) func() {
-	specPath := "/etc/docker/plugins"
-	if runtime.GOOS == "windows" {
-		specPath = filepath.Join(os.Getenv("programdata"), "docker", "plugins")
-	}
-
-	if err := os.MkdirAll(specPath, 0755); err != nil {
+	if err := os.MkdirAll("/etc/docker/plugins", 0755); err != nil {
 		t.Fatal(err)
 	}
-
-	defer func() {
-		if t.Failed() {
-			os.RemoveAll(specPath)
-		}
-	}()
 
 	server := httptest.NewServer(mux)
 	if server == nil {
 		t.Fatal("Failed to start an HTTP Server")
 	}
 
-	if err := os.WriteFile(filepath.Join(specPath, name+".spec"), []byte(server.URL), 0644); err != nil {
+	if err := ioutil.WriteFile(fmt.Sprintf("/etc/docker/plugins/%s.spec", name), []byte(server.URL), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -66,7 +55,7 @@ func setupPlugin(t *testing.T, name string, mux *http.ServeMux) func() {
 	})
 
 	return func() {
-		if err := os.RemoveAll(specPath); err != nil {
+		if err := os.RemoveAll("/etc/docker/plugins"); err != nil {
 			t.Fatal(err)
 		}
 		server.Close()
@@ -90,11 +79,7 @@ func TestGetCapabilities(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client, err := getPluginClient(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	d := newAllocator(plugin, client)
+	d := newAllocator(plugin, p.Client())
 
 	caps, err := d.(*allocator).getCapabilities()
 	if err != nil {
@@ -117,12 +102,7 @@ func TestGetCapabilitiesFromLegacyDriver(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client, err := getPluginClient(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	d := newAllocator(plugin, client)
+	d := newAllocator(plugin, p.Client())
 
 	if _, err := d.(*allocator).getCapabilities(); err == nil {
 		t.Fatalf("Expected error, but got Success %v", err)
@@ -147,11 +127,7 @@ func TestGetDefaultAddressSpaces(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client, err := getPluginClient(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	d := newAllocator(plugin, client)
+	d := newAllocator(plugin, p.Client())
 
 	l, g, err := d.(*allocator).GetDefaultAddressSpaces()
 	if err != nil {
@@ -241,11 +217,7 @@ func TestRemoteDriver(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client, err := getPluginClient(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	d := newAllocator(plugin, client)
+	d := newAllocator(plugin, p.Client())
 
 	l, g, err := d.(*allocator).GetDefaultAddressSpaces()
 	if err != nil {
