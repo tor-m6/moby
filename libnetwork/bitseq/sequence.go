@@ -10,9 +10,9 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/Sirupsen/logrus"
-	"github.com/docker/libnetwork/datastore"
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/datastore"
+	"github.com/docker/docker/libnetwork/types"
+	"github.com/sirupsen/logrus"
 )
 
 // block sequence constants
@@ -32,7 +32,7 @@ var (
 	ErrBitAllocated = errors.New("requested bit is already allocated")
 )
 
-// Handle contains the sequece representing the bitmask and its identifier
+// Handle contains the sequence representing the bitmask and its identifier
 type Handle struct {
 	bits       uint64
 	unselected uint64
@@ -144,11 +144,7 @@ func (s *sequence) equal(o *sequence) bool {
 		this = this.next
 		other = other.next
 	}
-	// Check if other is longer than this
-	if other != nil {
-		return false
-	}
-	return true
+	return other == nil
 }
 
 // ToByteArray converts the sequence into a byte array
@@ -326,7 +322,6 @@ func (h *Handle) set(ordinal, start, end uint64, any bool, release bool, serial 
 			}
 			h.Lock() // Acquire the lock back
 		}
-		logrus.Debugf("Received set for ordinal %v, start %v, end %v, any %t, release %t, serial:%v curr:%d \n", ordinal, start, end, any, release, serial, h.curr)
 		if serial {
 			curr = h.curr
 		}
@@ -373,7 +368,7 @@ func (h *Handle) set(ordinal, start, end uint64, any bool, release bool, serial 
 			h.Lock()
 		}
 
-		// Previous atomic push was succesfull. Save private copy to local copy
+		// Previous atomic push was successful. Save private copy to local copy
 		h.unselected = nh.unselected
 		h.head = nh.head
 		h.dbExists = nh.dbExists
@@ -415,7 +410,6 @@ func (h *Handle) Destroy() error {
 
 // ToByteArray converts this handle's data into a byte array
 func (h *Handle) ToByteArray() ([]byte, error) {
-
 	h.Lock()
 	defer h.Unlock()
 	ba := make([]byte, 16)
@@ -466,8 +460,8 @@ func (h *Handle) Unselected() uint64 {
 func (h *Handle) String() string {
 	h.Lock()
 	defer h.Unlock()
-	return fmt.Sprintf("App: %s, ID: %s, DBIndex: 0x%x, bits: %d, unselected: %d, sequence: %s",
-		h.app, h.id, h.dbIndex, h.bits, h.unselected, h.head.toString())
+	return fmt.Sprintf("App: %s, ID: %s, DBIndex: 0x%x, Bits: %d, Unselected: %d, Sequence: %s Curr:%d",
+		h.app, h.id, h.dbIndex, h.bits, h.unselected, h.head.toString(), h.curr)
 }
 
 // MarshalJSON encodes Handle into json message
@@ -622,13 +616,14 @@ func findSequence(head *sequence, bytePos uint64) (*sequence, *sequence, uint64,
 // Remove current sequence if empty.
 // Check if new sequence can be merged with neighbour (previous/next) sequences.
 //
-//
 // Identify "current" sequence containing block:
-//                                      [prev seq] [current seq] [next seq]
+//
+//	[prev seq] [current seq] [next seq]
 //
 // Based on block position, resulting list of sequences can be any of three forms:
 //
-//        block position                        Resulting list of sequences
+// block position                        Resulting list of sequences
+//
 // A) block is first in current:         [prev seq] [new] [modified current seq] [next seq]
 // B) block is last in current:          [prev seq] [modified current seq] [new] [next seq]
 // C) block is in the middle of current: [prev seq] [curr pre] [new] [curr post] [next seq]
@@ -700,7 +695,6 @@ func removeCurrentIfEmpty(head **sequence, previous, current *sequence) {
 			*head = current.next
 		} else {
 			previous.next = current.next
-			current = current.next
 		}
 	}
 }

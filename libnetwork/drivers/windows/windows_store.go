@@ -1,3 +1,4 @@
+//go:build windows
 // +build windows
 
 package windows
@@ -7,11 +8,11 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/Sirupsen/logrus"
-	"github.com/docker/libnetwork/datastore"
-	"github.com/docker/libnetwork/discoverapi"
-	"github.com/docker/libnetwork/netlabel"
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/datastore"
+	"github.com/docker/docker/libnetwork/discoverapi"
+	"github.com/docker/docker/libnetwork/netlabel"
+	"github.com/docker/docker/libnetwork/types"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -61,10 +62,8 @@ func (d *driver) populateNetworks() error {
 		if ncfg.Type != d.name {
 			continue
 		}
-		if err = d.createNetwork(ncfg); err != nil {
-			logrus.Warnf("could not create windows network for id %s hnsid %s while booting up from persistent state: %v", ncfg.ID, ncfg.HnsID, err)
-		}
-		logrus.Debugf("Network (%s) restored", ncfg.ID[0:7])
+		d.createNetwork(ncfg)
+		logrus.Debugf("Network  %v (%.7s) restored", d.name, ncfg.ID)
 	}
 
 	return nil
@@ -87,15 +86,15 @@ func (d *driver) populateEndpoints() error {
 		}
 		n, ok := d.networks[ep.nid]
 		if !ok {
-			logrus.Debugf("Network (%s) not found for restored endpoint (%s)", ep.nid[0:7], ep.id[0:7])
-			logrus.Debugf("Deleting stale endpoint (%s) from store", ep.id[0:7])
+			logrus.Debugf("Network (%.7s) not found for restored endpoint (%.7s)", ep.nid, ep.id)
+			logrus.Debugf("Deleting stale endpoint (%.7s) from store", ep.id)
 			if err := d.storeDelete(ep); err != nil {
-				logrus.Debugf("Failed to delete stale endpoint (%s) from store", ep.id[0:7])
+				logrus.Debugf("Failed to delete stale endpoint (%.7s) from store", ep.id)
 			}
 			continue
 		}
 		n.endpoints[ep.id] = ep
-		logrus.Debugf("Endpoint (%s) restored to network (%s)", ep.id[0:7], ep.nid[0:7])
+		logrus.Debugf("Endpoint (%.7s) restored to network (%.7s)", ep.id, ep.nid)
 	}
 
 	return nil
@@ -232,9 +231,12 @@ func (ep *hnsEndpoint) MarshalJSON() ([]byte, error) {
 	epMap["Type"] = ep.Type
 	epMap["profileID"] = ep.profileID
 	epMap["MacAddress"] = ep.macAddress.String()
-	epMap["Addr"] = ep.addr.String()
-	epMap["gateway"] = ep.gateway.String()
-
+	if ep.addr.IP != nil {
+		epMap["Addr"] = ep.addr.String()
+	}
+	if ep.gateway != nil {
+		epMap["gateway"] = ep.gateway.String()
+	}
 	epMap["epOption"] = ep.epOption
 	epMap["epConnectivity"] = ep.epConnectivity
 	epMap["PortMapping"] = ep.portMapping
@@ -251,7 +253,6 @@ func (ep *hnsEndpoint) UnmarshalJSON(b []byte) error {
 	if err = json.Unmarshal(b, &epMap); err != nil {
 		return fmt.Errorf("Failed to unmarshal to endpoint: %v", err)
 	}
-
 	if v, ok := epMap["MacAddress"]; ok {
 		if ep.macAddress, err = net.ParseMAC(v.(string)); err != nil {
 			return types.InternalErrorf("failed to decode endpoint MAC address (%s) after json unmarshal: %v", v.(string), err)
@@ -259,10 +260,12 @@ func (ep *hnsEndpoint) UnmarshalJSON(b []byte) error {
 	}
 	if v, ok := epMap["Addr"]; ok {
 		if ep.addr, err = types.ParseCIDR(v.(string)); err != nil {
-			return types.InternalErrorf("failed to decode endpoint IPv4 address (%s) after json unmarshal: %v", v.(string), err)
+			logrus.Warnf("failed to decode endpoint IPv4 address (%s) after json unmarshal: %v", v.(string), err)
 		}
 	}
-
+	if v, ok := epMap["gateway"]; ok {
+		ep.gateway = net.ParseIP(v.(string))
+	}
 	ep.id = epMap["id"].(string)
 	ep.Type = epMap["Type"].(string)
 	ep.nid = epMap["nid"].(string)

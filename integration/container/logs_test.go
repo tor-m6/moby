@@ -124,11 +124,6 @@ func testLogs(t *testing.T, logDriver string) {
 		},
 	}
 
-	pollTimeout := time.Second * 10
-	if testEnv.OSType == "windows" {
-		pollTimeout = StopContainerWindowsPollTimeout
-	}
-
 	for _, tC := range testCases {
 		tC := tC
 		t.Run(tC.desc, func(t *testing.T) {
@@ -141,9 +136,7 @@ func testLogs(t *testing.T, logDriver string) {
 			)
 			defer client.ContainerRemove(ctx, id, types.ContainerRemoveOptions{Force: true})
 
-			poll.WaitOn(t, container.IsStopped(ctx, client, id),
-				poll.WithDelay(time.Millisecond*100),
-				poll.WithTimeout(pollTimeout))
+			poll.WaitOn(t, container.IsStopped(ctx, client, id), poll.WithDelay(time.Millisecond*100))
 
 			logs, err := client.ContainerLogs(ctx, id, tC.logOps)
 			assert.NilError(t, err)

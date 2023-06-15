@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"syscall"
 	"time"
 
@@ -57,7 +56,7 @@ func retryError(err error) bool {
 		return true
 	}
 
-	if errors.Is(err, io.EOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) || errors.Is(err, os.ErrClosed) {
+	if errors.Is(err, io.EOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) || errors.Is(err, net.ErrClosed) {
 		return true
 	}
 	// catches TLS timeout or other network-related temporary errors

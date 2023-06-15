@@ -119,11 +119,8 @@ func (daemon *Daemon) filterByNameIDMatches(view *container.View, filter *listCo
 		// standard behavior of walking the entire container
 		// list from the daemon's in-memory store
 		all, err := view.All()
-		if err != nil {
-			return nil, err
-		}
 		sort.Sort(byCreatedDescending(all))
-		return all, nil
+		return all, err
 	}
 
 	// idSearch will determine if we limit name matching to the IDs
@@ -162,14 +159,14 @@ func (daemon *Daemon) filterByNameIDMatches(view *container.View, filter *listCo
 	cntrs := make([]container.Snapshot, 0, len(matches))
 	for id := range matches {
 		c, err := view.Get(id)
-		if err != nil {
-			if errdefs.IsNotFound(err) {
-				// ignore error
-				continue
-			}
+		switch err.(type) {
+		case nil:
+			cntrs = append(cntrs, *c)
+		case container.NoSuchContainerError:
+			// ignore error
+		default:
 			return nil, err
 		}
-		cntrs = append(cntrs, *c)
 	}
 
 	// Restore sort-order after filtering
@@ -238,10 +235,7 @@ func (daemon *Daemon) reducePsContainer(ctx context.Context, container *containe
 
 	// release lock because size calculation is slow
 	if filter.Size {
-		sizeRw, sizeRootFs, err := daemon.imageService.GetContainerLayerSize(ctx, newC.ID)
-		if err != nil {
-			return nil, err
-		}
+		sizeRw, sizeRootFs := daemon.imageService.GetContainerLayerSize(newC.ID)
 		newC.SizeRw = sizeRw
 		newC.SizeRootFs = sizeRootFs
 	}
@@ -257,7 +251,7 @@ func (daemon *Daemon) foldFilter(ctx context.Context, view *container.View, conf
 	err := psFilters.WalkValues("exited", func(value string) error {
 		code, err := strconv.Atoi(value)
 		if err != nil {
-			return errdefs.InvalidParameter(errors.Wrapf(err, "invalid filter 'exited=%s'", value))
+			return err
 		}
 		filtExited = append(filtExited, code)
 		return nil
@@ -268,7 +262,7 @@ func (daemon *Daemon) foldFilter(ctx context.Context, view *container.View, conf
 
 	err = psFilters.WalkValues("status", func(value string) error {
 		if !container.IsValidStateString(value) {
-			return errdefs.InvalidParameter(fmt.Errorf("invalid filter 'status=%s'", value))
+			return invalidFilter{"status", value}
 		}
 
 		config.All = true
@@ -278,15 +272,22 @@ func (daemon *Daemon) foldFilter(ctx context.Context, view *container.View, conf
 		return nil, err
 	}
 
-	taskFilter := psFilters.Contains("is-task")
-	isTask, err := psFilters.GetBoolOrDefault("is-task", false)
-	if err != nil {
-		return nil, err
+	var taskFilter, isTask bool
+	if psFilters.Contains("is-task") {
+		if psFilters.ExactMatch("is-task", "true") {
+			taskFilter = true
+			isTask = true
+		} else if psFilters.ExactMatch("is-task", "false") {
+			taskFilter = true
+			isTask = false
+		} else {
+			return nil, invalidFilter{"is-task", psFilters.Get("is-task")}
+		}
 	}
 
 	err = psFilters.WalkValues("health", func(value string) error {
 		if !container.IsValidHealthString(value) {
-			return errdefs.InvalidParameter(fmt.Errorf("unrecognized filter value for health: %s", value))
+			return errdefs.InvalidParameter(errors.Errorf("Unrecognised filter value for health: %s", value))
 		}
 
 		return nil
@@ -363,7 +364,8 @@ func (daemon *Daemon) foldFilter(ctx context.Context, view *container.View, conf
 
 func idOrNameFilter(view *container.View, value string) (*container.Snapshot, error) {
 	filter, err := view.Get(value)
-	if err != nil && errdefs.IsNotFound(err) {
+	switch err.(type) {
+	case container.NoSuchContainerError:
 		// Try name search instead
 		found := ""
 		for id, idNames := range view.GetAllNames() {

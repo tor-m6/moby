@@ -367,16 +367,16 @@ func GenerateJoinToken(rootCA *RootCA, fips bool) string {
 		panic(fmt.Errorf("failed to read random bytes: %v", err))
 	}
 
-	var nn, dgst big.Int
+	var nn, digest big.Int
 	nn.SetBytes(secretBytes[:])
-	dgst.SetString(rootCA.Digest.Encoded(), 16)
+	digest.SetString(rootCA.Digest.Hex(), 16)
 
 	fmtString := "SWMTKN-1-%0[1]*s-%0[3]*s"
 	if fips {
 		fmtString = "SWMTKN-2-1-%0[1]*s-%0[3]*s"
 	}
 	return fmt.Sprintf(fmtString, base36DigestLen,
-		dgst.Text(joinTokenBase), maxGeneratedSecretLength, nn.Text(joinTokenBase))
+		digest.Text(joinTokenBase), maxGeneratedSecretLength, nn.Text(joinTokenBase))
 }
 
 // DownloadRootCA tries to retrieve a remote root CA and matches the digest against the provided token.

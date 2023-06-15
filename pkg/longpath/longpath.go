@@ -1,20 +1,19 @@
-// Package longpath introduces some constants and helper functions for handling
-// long paths in Windows.
-//
-// Long paths are expected to be prepended with "\\?\" and followed by either a
-// drive letter, a UNC server\share, or a volume identifier.
+// longpath introduces some constants and helper functions for handling long paths
+// in Windows, which are expected to be prepended with `\\?\` and followed by either
+// a drive letter, a UNC server\share, or a volume identifier.
+
 package longpath // import "github.com/docker/docker/pkg/longpath"
 
 import (
-	"github.com/docker/docker/myos"
-	"runtime"
+	"os"
 	"strings"
+	"runtime"
 )
 
 // Prefix is the longpath prefix for Windows file paths.
 const Prefix = `\\?\`
 
-// AddPrefix adds the Windows long path prefix to the path provided if
+// AddPrefix will add the Windows long path prefix to the path provided if
 // it does not already have it.
 func AddPrefix(path string) string {
 	if !strings.HasPrefix(path, Prefix) {
@@ -32,7 +31,7 @@ func AddPrefix(path string) string {
 // the result is in Windows longpath format. On Unix systems it is
 // equivalent to [os.MkdirTemp].
 func MkdirTemp(dir, prefix string) (string, error) {
-	tempDir, err := myos.MkdirTemp(dir, prefix)
+	tempDir, err := os.MkdirTemp(dir, prefix)
 	if err != nil {
 		return "", err
 	}

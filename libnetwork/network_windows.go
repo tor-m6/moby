@@ -1,3 +1,4 @@
+//go:build windows
 // +build windows
 
 package libnetwork
@@ -7,10 +8,10 @@ import (
 	"time"
 
 	"github.com/Microsoft/hcsshim"
-	"github.com/Sirupsen/logrus"
-	"github.com/docker/libnetwork/drivers/windows"
-	"github.com/docker/libnetwork/ipamapi"
-	"github.com/docker/libnetwork/ipams/windowsipam"
+	"github.com/docker/docker/libnetwork/drivers/windows"
+	"github.com/docker/docker/libnetwork/ipamapi"
+	"github.com/docker/docker/libnetwork/ipams/windowsipam"
+	"github.com/sirupsen/logrus"
 )
 
 func executeInCompartment(compartmentID uint32, x func()) {
@@ -32,7 +33,7 @@ func (n *network) startResolver() {
 		return
 	}
 	n.resolverOnce.Do(func() {
-		logrus.Debugf("Launching DNS server for network", n.Name())
+		logrus.Debugf("Launching DNS server for network %q", n.Name())
 		options := n.Info().DriverOptions()
 		hnsid := options[windows.HNSID]
 

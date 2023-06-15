@@ -4,8 +4,8 @@
 package worker
 
 import (
-	"golang.org/x/sys/unix"
 	// "syscall"
+	"golang.org/x/sys/unix"
 )
 
 func detectDefaultGCCap(root string) int64 {

@@ -1,10 +1,11 @@
+//go:build linux
+// +build linux
+
 package overlay
 
 import (
 	"net"
 	"testing"
-
-	_ "github.com/docker/libnetwork/testutils"
 )
 
 func TestPeerMarshal(t *testing.T) {

@@ -7,17 +7,15 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"github.com/docker/docker/mystrings"
 )
 
-// ParseKeyValueOpt parses and validates the specified string as a key/value
-// pair (key=value).
-func ParseKeyValueOpt(opt string) (key string, value string, err error) {
-	k, v, ok := mystrings.Cut(opt, "=")
-	if !ok {
-		return "", "", fmt.Errorf("unable to parse key/value option: %s", opt)
+// ParseKeyValueOpt parses and validates the specified string as a key/value pair (key=value)
+func ParseKeyValueOpt(opt string) (string, string, error) {
+	parts := strings.SplitN(opt, "=", 2)
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("Unable to parse key/value option: %s", opt)
 	}
-	return strings.TrimSpace(k), strings.TrimSpace(v), nil
+	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), nil
 }
 
 // ParseUintListMaximum parses and validates the specified string as the value
@@ -77,12 +75,12 @@ func parseUintList(val string, maximum int) (map[int]bool, error) {
 			}
 			availableInts[v] = true
 		} else {
-			minS, maxS, _ := mystrings.Cut(r, "-")
-			min, err := strconv.Atoi(minS)
+			split := strings.SplitN(r, "-", 2)
+			min, err := strconv.Atoi(split[0])
 			if err != nil {
 				return nil, errInvalidFormat
 			}
-			max, err := strconv.Atoi(maxS)
+			max, err := strconv.Atoi(split[1])
 			if err != nil {
 				return nil, errInvalidFormat
 			}

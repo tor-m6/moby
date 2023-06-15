@@ -2,7 +2,6 @@ package images // import "github.com/docker/docker/daemon/images"
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -38,13 +37,18 @@ func (i *ImageService) Images(ctx context.Context, opts types.ImageListOptions) 
 		return nil, err
 	}
 
-	danglingOnly, err := opts.Filters.GetBoolOrDefault("dangling", false)
-	if err != nil {
-		return nil, err
+	var danglingOnly bool
+	if opts.Filters.Contains("dangling") {
+		if opts.Filters.ExactMatch("dangling", "true") {
+			danglingOnly = true
+		} else if !opts.Filters.ExactMatch("dangling", "false") {
+			return nil, invalidFilter{"dangling", opts.Filters.Get("dangling")}
+		}
 	}
 
 	var (
 		beforeFilter, sinceFilter time.Time
+		err                       error
 	)
 	err = opts.Filters.WalkValues("before", func(value string) error {
 		img, err := i.GetImage(ctx, value, imagetypes.GetImageOpts{})
@@ -128,7 +132,7 @@ func (i *ImageService) Images(ctx context.Context, opts types.ImageListOptions) 
 			if err != nil {
 				// The layer may have been deleted between the call to `Map()` or
 				// `Heads()` and the call to `Get()`, so we just ignore this error
-				if errors.Is(err, layer.ErrLayerDoesNotExist) {
+				if err == layer.ErrLayerDoesNotExist {
 					continue
 				}
 				return nil, err
@@ -173,6 +177,8 @@ func (i *ImageService) Images(ctx context.Context, opts types.ImageListOptions) 
 				if opts.Filters.Contains("reference") { // skip images with no references if filtering by reference
 					continue
 				}
+				summary.RepoDigests = []string{"<none>@<none>"}
+				summary.RepoTags = []string{"<none>:<none>"}
 			} else {
 				continue
 			}

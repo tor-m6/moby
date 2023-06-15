@@ -26,24 +26,27 @@ func GetKernelVersion() (*VersionInfo, error) {
 
 // getRelease uses `system_profiler SPSoftwareDataType` to get OSX kernel version
 func getRelease(osName string) (string, error) {
-	for _, line := range strings.Split(osName, "\n") {
+	var release string
+	data := strings.Split(osName, "\n")
+	for _, line := range data {
 		if !strings.Contains(line, "Kernel Version") {
 			continue
 		}
 		// It has the format like '      Kernel Version: Darwin 14.5.0'
-		_, ver, ok := strings.Cut(line, ":")
-		if !ok {
-			return "", fmt.Errorf("kernel Version is invalid")
+		content := strings.SplitN(line, ":", 2)
+		if len(content) != 2 {
+			return "", fmt.Errorf("Kernel Version is invalid")
 		}
 
-		_, release, ok := strings.Cut(strings.TrimSpace(ver), " ")
-		if !ok {
-			return "", fmt.Errorf("kernel version needs to be 'Darwin x.x.x'")
+		prettyNames := strings.SplitN(strings.TrimSpace(content[1]), " ", 2)
+
+		if len(prettyNames) != 2 {
+			return "", fmt.Errorf("Kernel Version needs to be 'Darwin x.x.x' ")
 		}
-		return release, nil
+		release = prettyNames[1]
 	}
 
-	return "", nil
+	return release, nil
 }
 
 func getSPSoftwareDataType() (string, error) {

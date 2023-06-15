@@ -520,7 +520,7 @@ func TestMirrorEndpointLookup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := Service{config: cfg}
+	s := defaultService{config: cfg}
 
 	imageName, err := reference.WithName(IndexName + "/test/image")
 	if err != nil {

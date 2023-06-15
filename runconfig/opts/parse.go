@@ -1,15 +1,19 @@
 package opts // import "github.com/docker/docker/runconfig/opts"
 
 import (
-	"github.com/docker/docker/mystrings"
+	"strings"
 )
 
 // ConvertKVStringsToMap converts ["key=value"] to {"key":"value"}
 func ConvertKVStringsToMap(values []string) map[string]string {
 	result := make(map[string]string, len(values))
 	for _, value := range values {
-		k, v, _ := mystrings.Cut(value, "=")
-		result[k] = v
+		kv := strings.SplitN(value, "=", 2)
+		if len(kv) == 1 {
+			result[kv[0]] = ""
+		} else {
+			result[kv[0]] = kv[1]
+		}
 	}
 
 	return result

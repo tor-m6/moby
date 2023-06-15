@@ -31,7 +31,7 @@ func gitMain() {
 	cmd := exec.Command(os.Args[1], os.Args[2:]...)
 	cmd.SysProcAttr = &unix.SysProcAttr{
 		Setpgid:   true,
-		// Pdeathsig: unix.SIGTERM,
+		Pdeathsig: unix.SIGTERM,
 	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

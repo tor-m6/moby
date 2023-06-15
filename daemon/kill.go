@@ -146,12 +146,7 @@ func (daemon *Daemon) Kill(container *containerpkg.Container) error {
 		}
 	}
 
-	waitTimeout := 10 * time.Second
-	if runtime.GOOS == "windows" {
-		waitTimeout = 75 * time.Second // runhcs can be sloooooow.
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	status := <-container.Wait(ctx, containerpkg.WaitConditionNotRunning)
@@ -159,7 +154,7 @@ func (daemon *Daemon) Kill(container *containerpkg.Container) error {
 		return nil
 	}
 
-	logrus.WithError(status.Err()).WithField("container", container.ID).Errorf("Container failed to exit within %v of kill - trying direct SIGKILL", waitTimeout)
+	logrus.WithError(status.Err()).WithField("container", container.ID).Error("Container failed to exit within 10 seconds of kill - trying direct SIGKILL")
 
 	if err := killProcessDirectly(container); err != nil {
 		if errors.As(err, &errNoSuchProcess{}) {

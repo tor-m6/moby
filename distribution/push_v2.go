@@ -24,7 +24,6 @@ import (
 	"github.com/docker/docker/pkg/progress"
 	"github.com/docker/docker/pkg/stringid"
 	"github.com/docker/docker/registry"
-	"github.com/docker/libtrust"
 	"github.com/opencontainers/go-digest"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -188,7 +187,7 @@ func (p *pusher) pushTag(ctx context.Context, ref reference.NamedTagged, id dige
 
 	putOptions := []distribution.ManifestServiceOption{distribution.WithTag(ref.Tag())}
 	if _, err = manSvc.Put(ctx, manifest, putOptions...); err != nil {
-		if runtime.GOOS == "windows" {
+		if runtime.GOOS == "windows" || p.config.TrustKey == nil || p.config.RequireSchema2 {
 			logrus.Warnf("failed to upload schema2 manifest: %v", err)
 			return err
 		}
@@ -212,11 +211,7 @@ func (p *pusher) pushTag(ctx context.Context, ref reference.NamedTagged, id dige
 		if err != nil {
 			return err
 		}
-		pk, err := libtrust.GenerateECP256PrivateKey()
-		if err != nil {
-			return errors.Wrap(err, "unexpected error generating private key")
-		}
-		builder = schema1.NewConfigManifestBuilder(p.repo.Blobs(ctx), pk, manifestRef, imgConfig)
+		builder = schema1.NewConfigManifestBuilder(p.repo.Blobs(ctx), p.config.TrustKey, manifestRef, imgConfig)
 		manifest, err = manifestFromBuilder(ctx, builder, descriptors)
 		if err != nil {
 			return err
@@ -636,8 +631,8 @@ func getMaxMountAndExistenceCheckAttempts(layer PushLayer) (maxMountAttempts, ma
 }
 
 // getRepositoryMountCandidates returns an array of v2 metadata items belonging to the given registry. The
-// array is sorted from youngest to oldest. The resulting array will contain only metadata entries having
-// registry part of SourceRepository matching the part of repoInfo.
+// array is sorted from youngest to oldest. If requireRegistryMatch is true, the resulting array will contain
+// only metadata entries having registry part of SourceRepository matching the part of repoInfo.
 func getRepositoryMountCandidates(
 	repoInfo reference.Named,
 	hmacKey []byte,

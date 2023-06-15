@@ -3,10 +3,10 @@ package windowsipam
 import (
 	"net"
 
-	"github.com/Sirupsen/logrus"
-	"github.com/docker/libnetwork/discoverapi"
-	"github.com/docker/libnetwork/ipamapi"
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/discoverapi"
+	"github.com/docker/docker/libnetwork/ipamapi"
+	"github.com/docker/docker/libnetwork/types"
+	"github.com/sirupsen/logrus"
 )
 
 const (

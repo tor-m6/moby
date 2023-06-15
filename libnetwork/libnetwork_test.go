@@ -1,37 +1,40 @@
+//go:build linux
+// +build linux
+
 package libnetwork_test
 
 import (
+	"errors"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"sync"
+	"path/filepath"
+	"runtime"
 	"testing"
 
-	"github.com/Sirupsen/logrus"
+	"github.com/docker/docker/libnetwork"
+	"github.com/docker/docker/libnetwork/config"
+	"github.com/docker/docker/libnetwork/datastore"
+	"github.com/docker/docker/libnetwork/driverapi"
+	"github.com/docker/docker/libnetwork/ipamapi"
+	"github.com/docker/docker/libnetwork/netlabel"
+	"github.com/docker/docker/libnetwork/options"
+	"github.com/docker/docker/libnetwork/testutils"
+	"github.com/docker/docker/libnetwork/types"
 	"github.com/docker/docker/pkg/plugins"
 	"github.com/docker/docker/pkg/reexec"
-	"github.com/docker/libnetwork"
-	"github.com/docker/libnetwork/config"
-	"github.com/docker/libnetwork/datastore"
-	"github.com/docker/libnetwork/driverapi"
-	"github.com/docker/libnetwork/ipamapi"
-	"github.com/docker/libnetwork/netlabel"
-	"github.com/docker/libnetwork/options"
-	"github.com/docker/libnetwork/testutils"
-	"github.com/docker/libnetwork/types"
-	"github.com/vishvananda/netns"
-)
-
-const (
-	bridgeNetType = "bridge"
+	"github.com/sirupsen/logrus"
 )
 
 var controller libnetwork.NetworkController
 
 func TestMain(m *testing.M) {
+	if runtime.GOOS == "windows" {
+		logrus.Info("Test suite does not currently support windows")
+		os.Exit(0)
+	}
 	if reexec.Init() {
 		return
 	}
@@ -75,7 +78,7 @@ func createTestNetwork(networkType, networkName string, netOption options.Generi
 
 func getEmptyGenericOption() map[string]interface{} {
 	genericOption := make(map[string]interface{})
-	genericOption[netlabel.GenericData] = options.Generic{}
+	genericOption[netlabel.GenericData] = map[string]string{}
 	return genericOption
 }
 
@@ -87,6 +90,11 @@ func getPortMapping() []types.PortBinding {
 		{Proto: types.TCP, Port: uint16(320), HostPort: uint16(32000), HostPortEnd: uint16(32999)},
 		{Proto: types.UDP, Port: uint16(420), HostPort: uint16(42000), HostPortEnd: uint16(42001)},
 	}
+}
+
+func isNotFound(err error) bool {
+	_, ok := (err).(types.NotFoundError)
+	return ok
 }
 
 func TestNull(t *testing.T) {
@@ -136,69 +144,6 @@ func TestNull(t *testing.T) {
 	}
 }
 
-func TestBridge(t *testing.T) {
-	if !testutils.IsRunningInContainer() {
-		defer testutils.SetupTestOSContext(t)()
-	}
-
-	netOption := options.Generic{
-		netlabel.EnableIPv6: true,
-		netlabel.GenericData: options.Generic{
-			"BridgeName":         "testnetwork",
-			"EnableICC":          true,
-			"EnableIPMasquerade": true,
-		},
-	}
-	ipamV4ConfList := []*libnetwork.IpamConf{{PreferredPool: "192.168.100.0/24", Gateway: "192.168.100.1"}}
-	ipamV6ConfList := []*libnetwork.IpamConf{{PreferredPool: "fe90::/64", Gateway: "fe90::22"}}
-
-	network, err := createTestNetwork(bridgeNetType, "testnetwork", netOption, ipamV4ConfList, ipamV6ConfList)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if err := network.Delete(); err != nil {
-			t.Fatal(err)
-		}
-	}()
-
-	ep, err := network.CreateEndpoint("testep")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	sb, err := controller.NewSandbox(containerID, libnetwork.OptionPortMapping(getPortMapping()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if err := sb.Delete(); err != nil {
-			t.Fatal(err)
-		}
-	}()
-
-	err = ep.Join(sb)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	epInfo, err := ep.DriverInfo()
-	if err != nil {
-		t.Fatal(err)
-	}
-	pmd, ok := epInfo[netlabel.PortMap]
-	if !ok {
-		t.Fatalf("Could not find expected info in endpoint data")
-	}
-	pm, ok := pmd.([]types.PortBinding)
-	if !ok {
-		t.Fatalf("Unexpected format for port mapping in endpoint operational data")
-	}
-	if len(pm) != 5 {
-		t.Fatalf("Incomplete data for port mapping in endpoint operational data: %d", len(pm))
-	}
-}
-
 func TestUnknownDriver(t *testing.T) {
 	if !testutils.IsRunningInContainer() {
 		defer testutils.SetupTestOSContext(t)()
@@ -209,7 +154,7 @@ func TestUnknownDriver(t *testing.T) {
 		t.Fatal("Expected to fail. But instead succeeded")
 	}
 
-	if _, ok := err.(types.NotFoundError); !ok {
+	if !isNotFound(err) {
 		t.Fatalf("Did not fail with expected error. Actual error: %v", err)
 	}
 }
@@ -221,7 +166,7 @@ func TestNilRemoteDriver(t *testing.T) {
 		t.Fatal("Expected to fail. But instead succeeded")
 	}
 
-	if _, ok := err.(types.NotFoundError); !ok {
+	if !isNotFound(err) {
 		t.Fatalf("Did not fail with expected error. Actual error: %v", err)
 	}
 }
@@ -361,7 +306,7 @@ func TestNetworkConfig(t *testing.T) {
 	}
 
 	// Verify config network cannot inherit another config network
-	configNetwork, err := controller.NewNetwork("bridge", "config_network0", "",
+	_, err := controller.NewNetwork("bridge", "config_network0", "",
 		libnetwork.NetworkOptionConfigOnly(),
 		libnetwork.NetworkOptionConfigFrom("anotherConfigNw"))
 
@@ -389,7 +334,7 @@ func TestNetworkConfig(t *testing.T) {
 		libnetwork.NetworkOptionIpam("default", "", ipamV4ConfList, ipamV6ConfList, nil),
 	}
 
-	configNetwork, err = controller.NewNetwork(bridgeNetType, "config_network0", "", netOptions...)
+	configNetwork, err := controller.NewNetwork(bridgeNetType, "config_network0", "", netOptions...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -417,7 +362,7 @@ func TestNetworkConfig(t *testing.T) {
 		libnetwork.NetworkOptionIpam("", "", ipamV4ConfList, nil, nil),
 		libnetwork.NetworkOptionIpam("", "", nil, ipamV6ConfList, nil),
 		libnetwork.NetworkOptionLabels(map[string]string{"number": "two"}),
-		libnetwork.NetworkOptionDriverOpts(map[string]string{"com.docker.network.mtu": "1600"}),
+		libnetwork.NetworkOptionDriverOpts(map[string]string{"com.docker.network.driver.mtu": "1600"}),
 	} {
 		_, err = controller.NewNetwork(bridgeNetType, "testBR", "",
 			libnetwork.NetworkOptionConfigFrom("config_network0"), opt)
@@ -455,7 +400,6 @@ func TestNetworkConfig(t *testing.T) {
 	if err := configNetwork.Delete(); err != nil {
 		t.Fatal(err)
 	}
-
 }
 
 func TestUnknownNetwork(t *testing.T) {
@@ -862,7 +806,7 @@ func TestNetworkQuery(t *testing.T) {
 		t.Fatalf("EndpointByName() returned %v instead of %v", e, ep11)
 	}
 
-	e, err = net1.EndpointByName("")
+	_, err = net1.EndpointByName("")
 	if err == nil {
 		t.Fatalf("EndpointByName() succeeded with invalid target name")
 	}
@@ -889,7 +833,7 @@ func TestNetworkQuery(t *testing.T) {
 		t.Fatalf("EndpointByID() returned %v instead of %v", e, ep12)
 	}
 
-	e, err = net1.EndpointByID("")
+	_, err = net1.EndpointByID("")
 	if err == nil {
 		t.Fatalf("EndpointByID() succeeded with invalid target id")
 	}
@@ -1069,7 +1013,11 @@ func TestEndpointMultipleJoins(t *testing.T) {
 	sbx1, err := controller.NewSandbox(containerID,
 		libnetwork.OptionHostname("test"),
 		libnetwork.OptionDomainname("docker.io"),
-		libnetwork.OptionExtraHost("web", "192.168.0.1"))
+		libnetwork.OptionExtraHost("web", "192.168.0.1"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer func() {
 		if err := sbx1.Delete(); err != nil {
 			t.Fatal(err)
@@ -1077,6 +1025,9 @@ func TestEndpointMultipleJoins(t *testing.T) {
 	}()
 
 	sbx2, err := controller.NewSandbox("c2")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer func() {
 		if err := sbx2.Delete(); err != nil {
 			t.Fatal(err)
@@ -1102,7 +1053,6 @@ func TestEndpointMultipleJoins(t *testing.T) {
 	if _, ok := err.(types.ForbiddenError); !ok {
 		t.Fatalf("Failed with unexpected error type: %T. Desc: %s", err, err.Error())
 	}
-
 }
 
 func TestLeaveAll(t *testing.T) {
@@ -1241,7 +1191,7 @@ func TestEndpointUpdateParent(t *testing.T) {
 		defer testutils.SetupTestOSContext(t)()
 	}
 
-	n, err := createTestNetwork("bridge", "testnetwork", options.Generic{
+	n, err := createTestNetwork(bridgeNetType, "testnetwork", options.Generic{
 		netlabel.GenericData: options.Generic{
 			"BridgeName": "testnetwork",
 		},
@@ -1304,10 +1254,6 @@ func TestEndpointUpdateParent(t *testing.T) {
 }
 
 func TestInvalidRemoteDriver(t *testing.T) {
-	if !testutils.IsRunningInContainer() {
-		t.Skip("Skipping test when not running inside a Container")
-	}
-
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
 	if server == nil {
@@ -1315,25 +1261,21 @@ func TestInvalidRemoteDriver(t *testing.T) {
 	}
 	defer server.Close()
 
-	type pluginRequest struct {
-		name string
-	}
-
 	mux.HandleFunc("/Plugin.Activate", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/vnd.docker.plugins.v1+json")
 		fmt.Fprintln(w, `{"Implements": ["InvalidDriver"]}`)
 	})
 
-	if err := os.MkdirAll("/etc/docker/plugins", 0755); err != nil {
+	if err := os.MkdirAll(specPath, 0755); err != nil {
 		t.Fatal(err)
 	}
 	defer func() {
-		if err := os.RemoveAll("/etc/docker/plugins"); err != nil {
+		if err := os.RemoveAll(specPath); err != nil {
 			t.Fatal(err)
 		}
 	}()
 
-	if err := ioutil.WriteFile("/etc/docker/plugins/invalid-network-driver.spec", []byte(server.URL), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(specPath, "invalid-network-driver.spec"), []byte(server.URL), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1349,16 +1291,12 @@ func TestInvalidRemoteDriver(t *testing.T) {
 		t.Fatal("Expected to fail. But instead succeeded")
 	}
 
-	if err != plugins.ErrNotImplements {
+	if !errors.Is(err, plugins.ErrNotImplements) {
 		t.Fatalf("Did not fail with expected error. Actual error: %v", err)
 	}
 }
 
 func TestValidRemoteDriver(t *testing.T) {
-	if !testutils.IsRunningInContainer() {
-		t.Skip("Skipping test when not running inside a Container")
-	}
-
 	mux := http.NewServeMux()
 	server := httptest.NewServer(mux)
 	if server == nil {
@@ -1366,29 +1304,33 @@ func TestValidRemoteDriver(t *testing.T) {
 	}
 	defer server.Close()
 
-	type pluginRequest struct {
-		name string
-	}
-
 	mux.HandleFunc("/Plugin.Activate", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/vnd.docker.plugins.v1+json")
 		fmt.Fprintf(w, `{"Implements": ["%s"]}`, driverapi.NetworkPluginEndpointType)
+	})
+	mux.HandleFunc(fmt.Sprintf("/%s.GetCapabilities", driverapi.NetworkPluginEndpointType), func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.docker.plugins.v1+json")
+		fmt.Fprintf(w, `{"Scope":"local"}`)
 	})
 	mux.HandleFunc(fmt.Sprintf("/%s.CreateNetwork", driverapi.NetworkPluginEndpointType), func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/vnd.docker.plugins.v1+json")
 		fmt.Fprintf(w, "null")
 	})
+	mux.HandleFunc(fmt.Sprintf("/%s.DeleteNetwork", driverapi.NetworkPluginEndpointType), func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.docker.plugins.v1+json")
+		fmt.Fprintf(w, "null")
+	})
 
-	if err := os.MkdirAll("/etc/docker/plugins", 0755); err != nil {
+	if err := os.MkdirAll(specPath, 0755); err != nil {
 		t.Fatal(err)
 	}
 	defer func() {
-		if err := os.RemoveAll("/etc/docker/plugins"); err != nil {
+		if err := os.RemoveAll(specPath); err != nil {
 			t.Fatal(err)
 		}
 	}()
 
-	if err := ioutil.WriteFile("/etc/docker/plugins/valid-network-driver.spec", []byte(server.URL), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(specPath, "valid-network-driver.spec"), []byte(server.URL), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1396,7 +1338,7 @@ func TestValidRemoteDriver(t *testing.T) {
 		libnetwork.NetworkOptionGeneric(getEmptyGenericOption()))
 	if err != nil {
 		// Only fail if we could not find the plugin driver
-		if _, ok := err.(types.NotFoundError); ok {
+		if isNotFound(err) {
 			t.Fatal(err)
 		}
 		return
@@ -1409,11 +1351,8 @@ func TestValidRemoteDriver(t *testing.T) {
 }
 
 var (
-	once   sync.Once
 	start  = make(chan struct{})
 	done   = make(chan chan struct{}, numThreads-1)
-	origns = netns.None()
-	testns = netns.None()
 	sboxes = make([]libnetwork.Sandbox, numThreads)
 )
 
@@ -1425,69 +1364,8 @@ const (
 	debug      = false
 )
 
-func createGlobalInstance(t *testing.T) {
-	var err error
-	defer close(start)
-
-	origns, err = netns.Get()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if testutils.IsRunningInContainer() {
-		testns = origns
-	} else {
-		testns, err = netns.New()
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	netOption := options.Generic{
-		netlabel.GenericData: options.Generic{
-			"BridgeName": "network",
-		},
-	}
-
-	net1, err := controller.NetworkByName("testhost")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	net2, err := createTestNetwork("bridge", "network2", netOption, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = net1.CreateEndpoint("pep1")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = net2.CreateEndpoint("pep2")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = net2.CreateEndpoint("pep3")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if sboxes[first-1], err = controller.NewSandbox(fmt.Sprintf("%drace", first), libnetwork.OptionUseDefaultSandbox()); err != nil {
-		t.Fatal(err)
-	}
-	for thd := first + 1; thd <= last; thd++ {
-		if sboxes[thd-1], err = controller.NewSandbox(fmt.Sprintf("%drace", thd)); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
-
-func debugf(format string, a ...interface{}) (int, error) {
+func debugf(format string, a ...interface{}) {
 	if debug {
-		return fmt.Printf(format, a...)
+		fmt.Printf(format, a...)
 	}
-
-	return 0, nil
 }

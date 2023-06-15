@@ -2,8 +2,6 @@ package netlabel
 
 import (
 	"testing"
-
-	_ "github.com/docker/libnetwork/testutils"
 )
 
 var input = []struct {

@@ -13,14 +13,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/myfilepath"
 	"github.com/docker/docker/builder"
 	"github.com/docker/docker/builder/remotecontext"
 	"github.com/docker/docker/builder/remotecontext/urlutil"
 	"github.com/docker/docker/pkg/archive"
 	"github.com/docker/docker/pkg/containerfs"
 	"github.com/docker/docker/pkg/idtools"
-	"github.com/docker/docker/pkg/longpath"
+	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/progress"
 	"github.com/docker/docker/pkg/streamformatter"
 	"github.com/docker/docker/pkg/system"
@@ -259,7 +258,7 @@ func (o *copier) storeInPathCache(im *imageMount, path string, hash string) {
 func (o *copier) copyWithWildcards(origPath string) ([]copyInfo, error) {
 	root := o.source.Root()
 	var copyInfos []copyInfo
-	if err := myfilepath.WalkDir(root, func(path string, _ os.FileInfo, err error) error {
+	if err := filepath.WalkDir(root, func(path string, _ os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -317,7 +316,7 @@ func walkSource(source builder.Source, origPath string) ([]string, error) {
 	}
 	// Must be a dir
 	var subfiles []string
-	err = myfilepath.WalkDir(fp, func(path string, _ os.FileInfo, err error) error {
+	err = filepath.WalkDir(fp, func(path string, _ os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -391,7 +390,7 @@ func downloadSource(output io.Writer, stdout io.Writer, srcURL string) (remote b
 	filename := getFilenameForDownload(u.Path, resp)
 
 	// Prepare file in a tmp dir
-	tmpDir, err := longpath.MkdirTemp("", "docker-remote")
+	tmpDir, err := ioutils.TempDir("", "docker-remote")
 	if err != nil {
 		return
 	}

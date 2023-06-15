@@ -1,3 +1,6 @@
+//go:build linux
+// +build linux
+
 package overlay
 
 import (
@@ -7,15 +10,15 @@ import (
 	"fmt"
 	"hash/fnv"
 	"net"
+	"strconv"
 	"sync"
 	"syscall"
 
-	"strconv"
-
-	"github.com/Sirupsen/logrus"
-	// "github.com/docker/libnetwork/iptables"
-	"github.com/docker/libnetwork/ns"
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/drivers/overlay/overlayutils"
+	"github.com/docker/docker/libnetwork/iptables"
+	"github.com/docker/docker/libnetwork/ns"
+	"github.com/docker/docker/libnetwork/types"
+	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 )
 
@@ -72,13 +75,12 @@ func (e *encrMap) String() string {
 			b.WriteString(",")
 		}
 		b.WriteString("]")
-
 	}
 	return b.String()
 }
 
 func (d *driver) checkEncryption(nid string, rIP net.IP, vxlanID uint32, isLocal, add bool) error {
-	logrus.Debugf("checkEncryption(%s, %v, %d, %t)", nid[0:7], rIP, vxlanID, isLocal)
+	logrus.Debugf("checkEncryption(%.7s, %v, %d, %t)", nid, rIP, vxlanID, isLocal)
 
 	n := d.network(nid)
 	if n == nil || !n.secure {
@@ -101,7 +103,7 @@ func (d *driver) checkEncryption(nid string, rIP net.IP, vxlanID uint32, isLocal
 			}
 			return false
 		}); err != nil {
-			logrus.Warnf("Failed to retrieve list of participating nodes in overlay network %s: %v", nid[0:5], err)
+			logrus.Warnf("Failed to retrieve list of participating nodes in overlay network %.5s: %v", nid, err)
 		}
 	default:
 		if len(d.network(nid).endpoints) > 0 {
@@ -200,7 +202,7 @@ func removeEncryption(localIP, remoteIP net.IP, em *encrMap) error {
 
 func programMangle(vni uint32, add bool) (err error) {
 	var (
-		p      = strconv.FormatUint(uint64(vxlanPort), 10)
+		p      = strconv.FormatUint(uint64(overlayutils.VXLANUDPPort()), 10)
 		c      = fmt.Sprintf("0>>22&0x3C@12&0xFFFFFF00=%d", int(vni)<<8)
 		m      = strconv.FormatUint(uint64(r), 10)
 		chain  = "OUTPUT"
@@ -209,7 +211,10 @@ func programMangle(vni uint32, add bool) (err error) {
 		action = "install"
 	)
 
-	if add == iptables.Exists(iptables.Mangle, chain, rule...) {
+	// TODO IPv6 support
+	iptable := iptables.GetIptable(iptables.IPv4)
+
+	if add == iptable.Exists(iptables.Mangle, chain, rule...) {
 		return
 	}
 
@@ -218,7 +223,7 @@ func programMangle(vni uint32, add bool) (err error) {
 		action = "remove"
 	}
 
-	if err = iptables.RawCombinedOutput(append([]string{"-t", string(iptables.Mangle), a, chain}, rule...)...); err != nil {
+	if err = iptable.RawCombinedOutput(append([]string{"-t", string(iptables.Mangle), a, chain}, rule...)...); err != nil {
 		logrus.Warnf("could not %s mangle rule: %v", action, err)
 	}
 
@@ -227,7 +232,7 @@ func programMangle(vni uint32, add bool) (err error) {
 
 func programInput(vni uint32, add bool) (err error) {
 	var (
-		port       = strconv.FormatUint(uint64(vxlanPort), 10)
+		port       = strconv.FormatUint(uint64(overlayutils.VXLANUDPPort()), 10)
 		vniMatch   = fmt.Sprintf("0>>22&0x3C@12&0xFFFFFF00=%d", int(vni)<<8)
 		plainVxlan = []string{"-p", "udp", "--dport", port, "-m", "u32", "--u32", vniMatch, "-j"}
 		ipsecVxlan = append([]string{"-m", "policy", "--dir", "in", "--pol", "ipsec"}, plainVxlan...)
@@ -238,16 +243,19 @@ func programInput(vni uint32, add bool) (err error) {
 		msg        = "add"
 	)
 
+	// TODO IPv6 support
+	iptable := iptables.GetIptable(iptables.IPv4)
+
 	if !add {
 		action = iptables.Delete
 		msg = "remove"
 	}
 
-	if err := iptables.ProgramRule(iptables.Filter, chain, action, accept); err != nil {
+	if err := iptable.ProgramRule(iptables.Filter, chain, action, accept); err != nil {
 		logrus.Errorf("could not %s input rule: %v. Please do it manually.", msg, err)
 	}
 
-	if err := iptables.ProgramRule(iptables.Filter, chain, action, block); err != nil {
+	if err := iptable.ProgramRule(iptables.Filter, chain, action, block); err != nil {
 		logrus.Errorf("could not %s input rule: %v. Please do it manually.", msg, err)
 	}
 
@@ -438,7 +446,7 @@ func (d *driver) setKeys(keys []*key) error {
 	d.keys = keys
 	d.secMap = &encrMap{nodes: map[string][]*spi{}}
 	d.Unlock()
-	logrus.Debugf("Initial encryption keys: %v", d.keys)
+	logrus.Debugf("Initial encryption keys: %v", keys)
 	return nil
 }
 
@@ -458,6 +466,8 @@ func (d *driver) updateKeys(newKey, primary, pruneKey *key) error {
 	)
 
 	d.Lock()
+	defer d.Unlock()
+
 	// add new
 	if newKey != nil {
 		d.keys = append(d.keys, newKey)
@@ -471,7 +481,6 @@ func (d *driver) updateKeys(newKey, primary, pruneKey *key) error {
 			delIdx = i
 		}
 	}
-	d.Unlock()
 
 	if (newKey != nil && newIdx == -1) ||
 		(primary != nil && priIdx == -1) ||
@@ -480,17 +489,18 @@ func (d *driver) updateKeys(newKey, primary, pruneKey *key) error {
 			"(newIdx,priIdx,delIdx):(%d, %d, %d)", newIdx, priIdx, delIdx)
 	}
 
+	if priIdx != -1 && priIdx == delIdx {
+		return types.BadRequestErrorf("attempting to both make a key (index %d) primary and delete it", priIdx)
+	}
+
 	d.secMapWalk(func(rIPs string, spis []*spi) ([]*spi, bool) {
 		rIP := net.ParseIP(rIPs)
 		return updateNodeKey(lIP, aIP, rIP, spis, d.keys, newIdx, priIdx, delIdx), false
 	})
 
-	d.Lock()
 	// swap primary
 	if priIdx != -1 {
-		swp := d.keys[0]
-		d.keys[0] = d.keys[priIdx]
-		d.keys[priIdx] = swp
+		d.keys[0], d.keys[priIdx] = d.keys[priIdx], d.keys[0]
 	}
 	// prune
 	if delIdx != -1 {
@@ -499,7 +509,6 @@ func (d *driver) updateKeys(newKey, primary, pruneKey *key) error {
 		}
 		d.keys = append(d.keys[:delIdx], d.keys[delIdx+1:]...)
 	}
-	d.Unlock()
 
 	logrus.Debugf("Updated: %v", d.keys)
 
@@ -600,7 +609,7 @@ func (n *network) maxMTU() int {
 	mtu -= vxlanEncap
 	if n.secure {
 		// In case of encryption account for the
-		// esp packet espansion and padding
+		// esp packet expansion and padding
 		mtu -= pktExpansion
 		mtu -= (mtu % 4)
 	}
@@ -618,6 +627,7 @@ func clearEncryptionStates() {
 		logrus.Warnf("Failed to retrieve SA list for cleanup: %v", err)
 	}
 	for _, sp := range spList {
+		sp := sp
 		if sp.Mark != nil && sp.Mark.Value == spMark.Value {
 			if err := nlh.XfrmPolicyDel(&sp); err != nil {
 				logrus.Warnf("Failed to delete stale SP %s: %v", sp, err)
@@ -627,6 +637,7 @@ func clearEncryptionStates() {
 		}
 	}
 	for _, sa := range saList {
+		sa := sa
 		if sa.Reqid == r {
 			if err := nlh.XfrmStateDel(&sa); err != nil {
 				logrus.Warnf("Failed to delete stale SA %s: %v", sa, err)

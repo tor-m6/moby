@@ -1,11 +1,9 @@
-//go:build linux || freebsd
-// +build linux freebsd
+//go:build linux || freebsd || inno
+// +build linux freebsd inno
 
 package images // import "github.com/docker/docker/daemon/images"
 
 import (
-	"context"
-
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/layer"
 	"github.com/sirupsen/logrus"
@@ -18,7 +16,7 @@ func (i *ImageService) GetLayerFolders(img *image.Image, rwLayer layer.RWLayer) 
 }
 
 // GetContainerLayerSize returns the real size & virtual size of the container.
-func (i *ImageService) GetContainerLayerSize(ctx context.Context, containerID string) (int64, int64, error) {
+func (i *ImageService) GetContainerLayerSize(containerID string) (int64, int64) {
 	var (
 		sizeRw, sizeRootfs int64
 		err                error
@@ -29,7 +27,7 @@ func (i *ImageService) GetContainerLayerSize(ctx context.Context, containerID st
 	rwlayer, err := i.layerStore.GetRWLayer(containerID)
 	if err != nil {
 		logrus.Errorf("Failed to compute size of container rootfs %v: %v", containerID, err)
-		return sizeRw, sizeRootfs, nil
+		return sizeRw, sizeRootfs
 	}
 	defer i.layerStore.ReleaseRWLayer(rwlayer)
 
@@ -48,5 +46,5 @@ func (i *ImageService) GetContainerLayerSize(ctx context.Context, containerID st
 			sizeRootfs += sizeRw
 		}
 	}
-	return sizeRw, sizeRootfs, nil
+	return sizeRw, sizeRootfs
 }

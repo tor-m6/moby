@@ -124,7 +124,7 @@ type Session struct {
 	// output and error.
 	//
 	// If either is nil, Run connects the corresponding file
-	// descriptor to an instance of io.Discard. There is a
+	// descriptor to an instance of ioutil.Discard. There is a
 	// fixed amount of buffering that is shared for the two streams.
 	// If either blocks it may eventually cause the remote
 	// command to block.

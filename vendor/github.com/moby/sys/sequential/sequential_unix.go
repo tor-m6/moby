@@ -3,10 +3,8 @@
 
 package sequential
 
-import (
-	"os"
-	"github.com/docker/docker/myos"
-)
+import "os"
+
 // Create creates the named file with mode 0666 (before umask), truncating
 // it if it already exists. If successful, methods on the returned
 // File can be used for I/O; the associated file descriptor has mode
@@ -43,5 +41,5 @@ func OpenFile(name string, flag int, perm os.FileMode) (*os.File, error) {
 // to find the pathname of the file. It is the caller's responsibility
 // to remove the file when no longer needed.
 func CreateTemp(dir, prefix string) (f *os.File, err error) {
-	return myos.CreateTemp(dir, prefix)
+	return os.CreateTemp(dir, prefix)
 }

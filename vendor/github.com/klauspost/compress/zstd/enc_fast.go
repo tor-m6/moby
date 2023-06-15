@@ -872,7 +872,6 @@ func (e *fastEncoderDict) Reset(d *dict, singleBlock bool) {
 	const shardSize = tableShardSize
 	if e.allDirty || dirtyShardCnt > shardCnt*4/6 {
 		copy(e.table[:], e.dictTable)
-		// e.table = *(*[tableSize]tableEntry)(e.dictTable)
 		for i := range e.tableShardDirty {
 			e.tableShardDirty[i] = false
 		}
@@ -885,7 +884,6 @@ func (e *fastEncoderDict) Reset(d *dict, singleBlock bool) {
 		}
 
 		copy(e.table[i*shardSize:(i+1)*shardSize], e.dictTable[i*shardSize:(i+1)*shardSize])
-		// *(*[shardSize]tableEntry)(e.table[i*shardSize:]) = *(*[shardSize]tableEntry)(e.dictTable[i*shardSize:])
 		e.tableShardDirty[i] = false
 	}
 	e.allDirty = false

@@ -3,10 +3,9 @@ package plugins // import "github.com/docker/docker/pkg/plugins"
 import (
 	"encoding/json"
 	"fmt"
-	// "io/fs"
+	"io/fs"
 	"net/url"
 	"os"
-	"io/ioutil"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -20,21 +19,17 @@ var (
 	socketsPath = "/run/docker/plugins"
 )
 
-// LocalRegistry defines a registry that is local (using unix socket).
-type LocalRegistry struct {
-	SpecsPaths func() []string
-}
+// localRegistry defines a registry that is local (using unix socket).
+type localRegistry struct{}
 
-func NewLocalRegistry() LocalRegistry {
-	return LocalRegistry{
-		SpecsPaths,
-	}
+func newLocalRegistry() localRegistry {
+	return localRegistry{}
 }
 
 // Scan scans all the plugin paths and returns all the names it found
-func (l *LocalRegistry) Scan() ([]string, error) {
+func Scan() ([]string, error) {
 	var names []string
-	dirEntries, err := ioutil.ReadDir(socketsPath)
+	dirEntries, err := os.ReadDir(socketsPath)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, errors.Wrap(err, "error reading dir entries")
 	}
@@ -46,29 +41,23 @@ func (l *LocalRegistry) Scan() ([]string, error) {
 				continue
 			}
 
-			// entry = fs.FileInfoToDirEntry(fi)
-			entry = fi
-			if fi == nil {
-				continue
-			}
-			// entry = os.DirEntry{fileInfo: fi}
-
+			entry = fs.FileInfoToDirEntry(fi)
 		}
 
-		if entry.Mode()&os.ModeSocket != 0 {
+		if entry.Type()&os.ModeSocket != 0 {
 			names = append(names, strings.TrimSuffix(filepath.Base(entry.Name()), filepath.Ext(entry.Name())))
 		}
 	}
 
-	for _, p := range l.SpecsPaths() {
-		dirEntries, err := ioutil.ReadDir(p)
+	for _, p := range specsPaths {
+		dirEntries, err := os.ReadDir(p)
 		if err != nil && !os.IsNotExist(err) {
 			return nil, errors.Wrap(err, "error reading dir entries")
 		}
 
 		for _, fi := range dirEntries {
 			if fi.IsDir() {
-				infos, err := ioutil.ReadDir(filepath.Join(p, fi.Name()))
+				infos, err := os.ReadDir(filepath.Join(p, fi.Name()))
 				if err != nil {
 					continue
 				}
@@ -94,7 +83,7 @@ func (l *LocalRegistry) Scan() ([]string, error) {
 }
 
 // Plugin returns the plugin registered with the given name (or returns an error).
-func (l *LocalRegistry) Plugin(name string) (*Plugin, error) {
+func (l *localRegistry) Plugin(name string) (*Plugin, error) {
 	socketpaths := pluginPaths(socketsPath, name, ".sock")
 
 	for _, p := range socketpaths {
@@ -104,7 +93,7 @@ func (l *LocalRegistry) Plugin(name string) (*Plugin, error) {
 	}
 
 	var txtspecpaths []string
-	for _, p := range l.SpecsPaths() {
+	for _, p := range specsPaths {
 		txtspecpaths = append(txtspecpaths, pluginPaths(p, name, ".spec")...)
 		txtspecpaths = append(txtspecpaths, pluginPaths(p, name, ".json")...)
 	}
@@ -121,7 +110,7 @@ func (l *LocalRegistry) Plugin(name string) (*Plugin, error) {
 }
 
 func readPluginInfo(name, path string) (*Plugin, error) {
-	content, err := ioutil.ReadFile(path)
+	content, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}

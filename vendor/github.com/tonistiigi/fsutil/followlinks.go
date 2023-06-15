@@ -1,8 +1,8 @@
 package fsutil
 
 import (
-	"os"
 	"io/ioutil"
+	"os"
 	"path/filepath"
 	"runtime"
 	"sort"

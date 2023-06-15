@@ -28,10 +28,12 @@ import (
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/layer"
 	libcontainerdtypes "github.com/docker/docker/libcontainerd/types"
-	"github.com/docker/docker/oci"
 	"github.com/docker/docker/pkg/containerfs"
 	"github.com/docker/docker/pkg/idtools"
 	"github.com/docker/docker/pkg/ioutils"
+	// "github.com/docker/docker/pkg/archive"
+	// "github.com/docker/docker/pkg/system"
+	"github.com/moby/buildkit/util/system"
 	"github.com/docker/docker/restartmanager"
 	"github.com/docker/docker/volume"
 	volumemounts "github.com/docker/docker/volume/mounts"
@@ -39,7 +41,6 @@ import (
 	agentexec "github.com/moby/swarmkit/v2/agent/exec"
 	"github.com/moby/sys/signal"
 	"github.com/moby/sys/symlink"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -73,7 +74,6 @@ type Container struct {
 	Args            []string
 	Config          *containertypes.Config
 	ImageID         image.ID `json:"Image"`
-	ImageManifest   *ocispec.Descriptor
 	NetworkSettings *network.Settings
 	LogPath         string
 	Name            string
@@ -95,7 +95,7 @@ type Container struct {
 	// logDriver for closing
 	LogDriver      logger.Logger  `json:"-"`
 	LogCopier      *logger.Copier `json:"-"`
-	restartManager *restartmanager.RestartManager
+	restartManager restartmanager.RestartManager
 	attachContext  *attachContext
 
 	// Fields here are specific to Unix platforms
@@ -559,7 +559,13 @@ func (container *Container) InitDNSHostConfig() {
 
 // UpdateMonitor updates monitor configure for running container
 func (container *Container) UpdateMonitor(restartPolicy containertypes.RestartPolicy) {
-	container.RestartManager().SetPolicy(restartPolicy)
+	type policySetter interface {
+		SetPolicy(containertypes.RestartPolicy)
+	}
+
+	if rm, ok := container.RestartManager().(policySetter); ok {
+		rm.SetPolicy(restartPolicy)
+	}
 }
 
 // FullHostname returns hostname and optional domain appended to it.
@@ -572,7 +578,7 @@ func (container *Container) FullHostname() string {
 }
 
 // RestartManager returns the current restartmanager instance connected to container.
-func (container *Container) RestartManager() *restartmanager.RestartManager {
+func (container *Container) RestartManager() restartmanager.RestartManager {
 	if container.restartManager == nil {
 		container.restartManager = restartmanager.New(container.HostConfig.RestartPolicy, container.RestartCount)
 	}
@@ -733,7 +739,7 @@ func (container *Container) CreateDaemonEnvironment(tty bool, linkedEnv []string
 
 	env := make([]string, 0, envSize)
 	if runtime.GOOS != "windows" {
-		env = append(env, "PATH="+oci.DefaultPathEnv(ctrOS))
+		env = append(env, "PATH="+system.DefaultPathEnv(ctrOS))
 		env = append(env, "HOSTNAME="+container.Config.Hostname)
 		if tty {
 			env = append(env, "TERM=xterm")

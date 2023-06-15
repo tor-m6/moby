@@ -6,12 +6,12 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/containerd/cgroups/v3"
+	"github.com/containerd/cgroups"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/opts"
 	"github.com/docker/docker/pkg/homedir"
-	"github.com/docker/docker/pkg/rootless"
+	"github.com/docker/docker/rootless"
 	units "github.com/docker/go-units"
 	"github.com/pkg/errors"
 )

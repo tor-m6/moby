@@ -3,7 +3,6 @@ package opts // import "github.com/docker/docker/opts"
 import (
 	"fmt"
 	"strings"
-	"github.com/docker/docker/mystrings"
 
 	"github.com/docker/docker/api/types"
 )
@@ -30,29 +29,27 @@ func (o *RuntimeOpt) Name() string {
 
 // Set validates and updates the list of Runtimes
 func (o *RuntimeOpt) Set(val string) error {
-	k, v, ok := mystrings.Cut(val, "=")
-	if !ok {
+	parts := strings.SplitN(val, "=", 2)
+	if len(parts) != 2 {
 		return fmt.Errorf("invalid runtime argument: %s", val)
 	}
 
-	// TODO(thaJeztah): this should not accept spaces.
-	k = strings.TrimSpace(k)
-	v = strings.TrimSpace(v)
-	if k == "" || v == "" {
+	parts[0] = strings.TrimSpace(parts[0])
+	parts[1] = strings.TrimSpace(parts[1])
+	if parts[0] == "" || parts[1] == "" {
 		return fmt.Errorf("invalid runtime argument: %s", val)
 	}
 
-	// TODO(thaJeztah): this should not be case-insensitive.
-	k = strings.ToLower(k)
-	if k == o.stockRuntimeName {
+	parts[0] = strings.ToLower(parts[0])
+	if parts[0] == o.stockRuntimeName {
 		return fmt.Errorf("runtime name '%s' is reserved", o.stockRuntimeName)
 	}
 
-	if _, ok := (*o.values)[k]; ok {
-		return fmt.Errorf("runtime '%s' was already defined", k)
+	if _, ok := (*o.values)[parts[0]]; ok {
+		return fmt.Errorf("runtime '%s' was already defined", parts[0])
 	}
 
-	(*o.values)[k] = types.Runtime{Path: v}
+	(*o.values)[parts[0]] = types.Runtime{Path: parts[1]}
 
 	return nil
 }

@@ -1,5 +1,5 @@
-//go:build linux || freebsd
-// +build linux freebsd
+//go:build linux || freebsd || inno
+// +build linux freebsd inno
 
 package daemon // import "github.com/docker/docker/daemon"
 
@@ -15,8 +15,8 @@ import (
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/libnetwork"
 	"github.com/docker/docker/pkg/idtools"
-	"github.com/docker/docker/pkg/process"
 	"github.com/docker/docker/pkg/stringid"
+	"github.com/docker/docker/pkg/system"
 	"github.com/docker/docker/runconfig"
 	"github.com/moby/sys/mount"
 	"github.com/opencontainers/selinux/go-selinux/label"
@@ -144,7 +144,7 @@ func (daemon *Daemon) setupIpcDirs(c *container.Container) error {
 			}
 
 			shmproperty := "mode=1777,size=" + strconv.FormatInt(c.HostConfig.ShmSize, 10)
-			if err := unix.Mount("shm", shmPath, "tmpfs", uintptr(unix.MS_NOEXEC|unix.MS_NOSUID|unix.MS_NODEV), label.FormatMountLabel(shmproperty, c.GetMountLabel())); err != nil {
+			if err := syscall.Mount("shm", shmPath, "tmpfs", uintptr(unix.MS_NOEXEC|unix.MS_NOSUID|unix.MS_NODEV), label.FormatMountLabel(shmproperty, c.GetMountLabel())); err != nil {
 				return fmt.Errorf("mounting shm tmpfs: %s", err)
 			}
 			if err := os.Chown(shmPath, rootIDs.UID, rootIDs.GID); err != nil {
@@ -352,9 +352,10 @@ func killProcessDirectly(container *container.Container) error {
 	}
 
 	// In case there were some exceptions(e.g., state of zombie and D)
-	if process.Alive(pid) {
+	if system.IsProcessAlive(pid) {
 		// Since we can not kill a zombie pid, add zombie check here
-		isZombie, err := process.Zombie(pid)
+		isZombie, err := system.IsProcessZombie(pid)
+		// TODO(thaJeztah) should we ignore os.IsNotExist() here? ("/proc/<pid>/stat" will be gone if the process exited)
 		if err != nil {
 			logrus.WithError(err).WithField("container", container.ID).Warn("Container state is invalid")
 			return err

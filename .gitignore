@@ -1,28 +1,27 @@
-# If you want to ignore files created by your editor/tools, please consider a
-# [global .gitignore](https://help.github.com/articles/ignoring-files).
-
-*~
-*.bak
+# Docker project generated files to ignore
+#  if you want to ignore files created by your editor/tools,
+#  please consider a global .gitignore https://help.github.com/articles/ignoring-files
+*.exe
+*.exe~
+*.gz
 *.orig
+test.main
 .*.swp
 .DS_Store
-thumbs.db
-
-# local repository customization
-.envrc
+# a .bashrc may be added to customize the build environment
 .bashrc
 .editorconfig
-
-# build artifacts
+.gopath/
+.go-pkg-cache/
 bundles/
-cli/winresources/*/*.syso
-cli/winresources/*/winres.json
+cli/winresources/**/winres.json
+cli/winresources/**/*.syso
+cmd/dockerd/dockerd
 contrib/builder/rpm/*/changelog
-
-# ci artifacts
-*.exe
-*.gz
+vendor/pkg/
 go-test-report.json
-junit-report.xml
 profile.out
-test.main
+junit-report.xml
+
+# top-level go.mod is not meant to be checked in
+/go.mod

@@ -3,13 +3,13 @@ package datastore
 import (
 	"errors"
 
+	"github.com/docker/docker/libnetwork/types"
 	"github.com/docker/libkv/store"
-	"github.com/docker/libnetwork/types"
 )
 
 var (
-	// ErrNotImplmented exported
-	ErrNotImplmented = errors.New("Functionality not implemented")
+	// ErrNotImplemented exported
+	ErrNotImplemented = errors.New("Functionality not implemented")
 )
 
 // MockData exported
@@ -37,7 +37,6 @@ func (s *MockStore) Get(key string) (*store.KVPair, error) {
 		return nil, nil
 	}
 	return &store.KVPair{Value: mData.Data, LastIndex: mData.Index}, nil
-
 }
 
 // Put a value at "key"
@@ -65,7 +64,7 @@ func (s *MockStore) Exists(key string) (bool, error) {
 
 // List gets a range of values at "directory"
 func (s *MockStore) List(prefix string) ([]*store.KVPair, error) {
-	return nil, ErrNotImplmented
+	return nil, ErrNotImplemented
 }
 
 // DeleteTree deletes a range of values at "directory"
@@ -76,17 +75,17 @@ func (s *MockStore) DeleteTree(prefix string) error {
 
 // Watch a single key for modifications
 func (s *MockStore) Watch(key string, stopCh <-chan struct{}) (<-chan *store.KVPair, error) {
-	return nil, ErrNotImplmented
+	return nil, ErrNotImplemented
 }
 
 // WatchTree triggers a watch on a range of values at "directory"
 func (s *MockStore) WatchTree(prefix string, stopCh <-chan struct{}) (<-chan []*store.KVPair, error) {
-	return nil, ErrNotImplmented
+	return nil, ErrNotImplemented
 }
 
 // NewLock exposed
 func (s *MockStore) NewLock(key string, options *store.LockOptions) (store.Locker, error) {
-	return nil, ErrNotImplmented
+	return nil, ErrNotImplemented
 }
 
 // AtomicPut put a value at "key" if the key has not been
@@ -125,5 +124,4 @@ func (s *MockStore) AtomicDelete(key string, previous *store.KVPair) (bool, erro
 
 // Close closes the client connection
 func (s *MockStore) Close() {
-	return
 }

@@ -9,10 +9,11 @@ import (
 	"sync"
 
 	"github.com/Microsoft/hcsshim"
-	"github.com/Sirupsen/logrus"
-	"github.com/docker/libnetwork/driverapi"
-	"github.com/docker/libnetwork/netlabel"
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/driverapi"
+	"github.com/docker/docker/libnetwork/netlabel"
+	"github.com/docker/docker/libnetwork/portmapper"
+	"github.com/docker/docker/libnetwork/types"
+	"github.com/sirupsen/logrus"
 )
 
 var (
@@ -37,7 +38,7 @@ type subnetJSON struct {
 type network struct {
 	id              string
 	name            string
-	hnsId           string
+	hnsID           string
 	providerAddress string
 	interfaceName   string
 	endpoints       endpointTable
@@ -46,6 +47,7 @@ type network struct {
 	initErr         error
 	subnets         []*subnet
 	secure          bool
+	portMapper      *portmapper.PortMapper
 	sync.Mutex
 }
 
@@ -89,10 +91,11 @@ func (d *driver) CreateNetwork(id string, option map[string]interface{}, nInfo d
 	}
 
 	n := &network{
-		id:        id,
-		driver:    d,
-		endpoints: endpointTable{},
-		subnets:   []*subnet{},
+		id:         id,
+		driver:     d,
+		endpoints:  endpointTable{},
+		subnets:    []*subnet{},
+		portMapper: portmapper.New(""),
 	}
 
 	genData, ok := option[netlabel.GenericData].(map[string]string)
@@ -108,7 +111,7 @@ func (d *driver) CreateNetwork(id string, option map[string]interface{}, nInfo d
 		case "com.docker.network.windowsshim.interface":
 			interfaceName = value
 		case "com.docker.network.windowsshim.hnsid":
-			n.hnsId = value
+			n.hnsID = value
 		case netlabel.OverlayVxlanIDList:
 			vniStrings := strings.Split(value, ",")
 			for _, vniStr := range vniStrings {
@@ -181,7 +184,7 @@ func (d *driver) CreateNetwork(id string, option map[string]interface{}, nInfo d
 	if err != nil {
 		d.deleteNetwork(id)
 	} else {
-		genData["com.docker.network.windowsshim.hnsid"] = n.hnsId
+		genData["com.docker.network.windowsshim.hnsid"] = n.hnsID
 	}
 
 	return err
@@ -197,7 +200,7 @@ func (d *driver) DeleteNetwork(nid string) error {
 		return types.ForbiddenErrorf("could not find network with id %s", nid)
 	}
 
-	_, err := hcsshim.HNSNetworkRequest("DELETE", n.hnsId, "")
+	_, err := hcsshim.HNSNetworkRequest("DELETE", n.hnsID, "")
 	if err != nil {
 		return types.ForbiddenErrorf(err.Error())
 	}
@@ -242,7 +245,7 @@ func (d *driver) network(nid string) *network {
 // 	}
 
 // 	for _, endpoint := range hnsresponse {
-// 		if endpoint.VirtualNetwork != n.hnsId {
+// 		if endpoint.VirtualNetwork != n.hnsID {
 // 			continue
 // 		}
 
@@ -260,7 +263,7 @@ func (d *driver) network(nid string) *network {
 func (n *network) convertToOverlayEndpoint(v *hcsshim.HNSEndpoint) *endpoint {
 	ep := &endpoint{
 		id:        v.Name,
-		profileId: v.Id,
+		profileID: v.Id,
 		nid:       n.id,
 		remote:    v.IsRemoteEndpoint,
 	}
@@ -311,6 +314,7 @@ func (d *driver) createHnsNetwork(n *network) error {
 		Type:               d.Type(),
 		Subnets:            subnets,
 		NetworkAdapterName: n.interfaceName,
+		AutomaticDNS:       true,
 	}
 
 	configurationb, err := json.Marshal(network)
@@ -326,7 +330,7 @@ func (d *driver) createHnsNetwork(n *network) error {
 		return err
 	}
 
-	n.hnsId = hnsresponse.Id
+	n.hnsID = hnsresponse.Id
 	n.providerAddress = hnsresponse.ManagementIP
 
 	return nil

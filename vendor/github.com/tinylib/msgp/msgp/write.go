@@ -10,11 +10,6 @@ import (
 	"time"
 )
 
-const (
-	// min buffer size for the writer
-	minWriterSize = 18
-)
-
 // Sizer is an interface implemented
 // by types that can estimate their
 // size when MessagePack encoded.
@@ -125,27 +120,16 @@ func NewWriter(w io.Writer) *Writer {
 
 // NewWriterSize returns a writer with a custom buffer size.
 func NewWriterSize(w io.Writer, sz int) *Writer {
-	// we must be able to require() 'minWriterSize'
+	// we must be able to require() 18
 	// contiguous bytes, so that is the
 	// practical minimum buffer size
-	if sz < minWriterSize {
-		sz = minWriterSize
+	if sz < 18 {
+		sz = 18
 	}
-	buf := make([]byte, sz)
-	return NewWriterBuf(w, buf)
-}
 
-// NewWriterBuf returns a writer with a provided buffer.
-// 'buf' is not used when the capacity is smaller than 18,
-// custom buffer is allocated instead.
-func NewWriterBuf(w io.Writer, buf []byte) *Writer {
-	if cap(buf) < minWriterSize {
-		buf = make([]byte, minWriterSize)
-	}
-	buf = buf[:cap(buf)]
 	return &Writer{
 		w:   w,
-		buf: buf,
+		buf: make([]byte, sz),
 	}
 }
 

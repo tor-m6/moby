@@ -4,11 +4,12 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/docker/docker/cli"
 	"github.com/docker/docker/daemon/config"
 	"github.com/docker/docker/dockerversion"
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/docker/pkg/reexec"
-	"github.com/docker/docker/pkg/rootless"
+	"github.com/docker/docker/rootless"
 	"github.com/moby/buildkit/util/apicaps"
 	"github.com/moby/term"
 	"github.com/sirupsen/logrus"
@@ -31,7 +32,7 @@ func newDaemonCommand() (*cobra.Command, error) {
 		Short:         "A self-sufficient runtime for containers.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          NoArgs,
+		Args:          cli.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.flags = cmd.Flags()
 			return runDaemon(opts)
@@ -39,7 +40,7 @@ func newDaemonCommand() (*cobra.Command, error) {
 		DisableFlagsInUseLine: true,
 		Version:               fmt.Sprintf("%s, build %s", dockerversion.Version, dockerversion.GitCommit),
 	}
-	SetupRootCommand(cmd)
+	cli.SetupRootCommand(cmd)
 
 	flags := cmd.Flags()
 	flags.BoolP("version", "v", false, "Print version information and quit")

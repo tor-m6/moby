@@ -1,4 +1,3 @@
-//go:build !windows
 // +build !windows
 
 // Package term provides structures and helper functions to work with
@@ -15,8 +14,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// ErrInvalidState is returned if the state of the terminal is invalid.
-var ErrInvalidState = errors.New("Invalid terminal state")
+var (
+	// ErrInvalidState is returned if the state of the terminal is invalid.
+	ErrInvalidState = errors.New("Invalid terminal state")
+)
 
 // State represents the state of the terminal.
 type State struct {

@@ -8,7 +8,6 @@ import (
 
 	"github.com/docker/distribution"
 	"github.com/docker/distribution/manifest/schema2"
-	"github.com/docker/distribution/reference"
 	"github.com/docker/docker/api/types/registry"
 	"github.com/docker/docker/distribution/metadata"
 	"github.com/docker/docker/distribution/xfer"
@@ -18,6 +17,7 @@ import (
 	"github.com/docker/docker/pkg/system"
 	refstore "github.com/docker/docker/reference"
 	registrypkg "github.com/docker/docker/registry"
+	"github.com/docker/libtrust"
 	"github.com/opencontainers/go-digest"
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
@@ -36,7 +36,7 @@ type Config struct {
 	ProgressOutput progress.Output
 	// RegistryService is the registry service to use for TLS configuration
 	// and endpoint lookup.
-	RegistryService RegistryResolver
+	RegistryService registrypkg.Service
 	// ImageEventLogger notifies events for a given image
 	ImageEventLogger func(id, name, action string)
 	// MetadataStore is the storage backend for distribution-specific
@@ -47,6 +47,8 @@ type Config struct {
 	// ReferenceStore manages tags. This value is optional, when excluded
 	// content will not be tagged.
 	ReferenceStore refstore.Store
+	// RequireSchema2 ensures that only schema2 manifests are used.
+	RequireSchema2 bool
 }
 
 // ImagePullConfig stores pull configuration.
@@ -72,15 +74,11 @@ type ImagePushConfig struct {
 	ConfigMediaType string
 	// LayerStores manages layers.
 	LayerStores PushLayerProvider
+	// TrustKey is the private key for legacy signatures. This is typically
+	// an ephemeral key, since these signatures are no longer verified.
+	TrustKey libtrust.PrivateKey
 	// UploadManager dispatches uploads.
 	UploadManager *xfer.LayerUploadManager
-}
-
-// RegistryResolver is used for TLS configuration and endpoint lookup.
-type RegistryResolver interface {
-	LookupPushEndpoints(hostname string) (endpoints []registrypkg.APIEndpoint, err error)
-	LookupPullEndpoints(hostname string) (endpoints []registrypkg.APIEndpoint, err error)
-	ResolveRepository(name reference.Named) (*registrypkg.RepositoryInfo, error)
 }
 
 // ImageConfigStore handles storing and getting image configurations
@@ -126,7 +124,7 @@ func (s *imageConfigStore) Put(_ context.Context, c []byte) (digest.Digest, erro
 }
 
 func (s *imageConfigStore) Get(_ context.Context, d digest.Digest) ([]byte, error) {
-	img, err := s.Store.Get(image.ID(d))
+	img, err := s.Store.Get(image.IDFromDigest(d))
 	if err != nil {
 		return nil, err
 	}

@@ -234,8 +234,8 @@ func (j *Journal) Data() (map[string]string, error) {
 			return m, fmt.Errorf("journald: error enumerating entry data: %w", syscall.Errno(-rc))
 		}
 
-		k, v, _ := strings.Cut(C.GoStringN((*C.char)(data), C.int(len)), "=")
-		m[k] = v
+		kv := strings.SplitN(C.GoStringN((*C.char)(data), C.int(len)), "=", 2)
+		m[kv[0]] = kv[1]
 	}
 }
 

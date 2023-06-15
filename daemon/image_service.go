@@ -30,36 +30,31 @@ type ImageService interface {
 	CreateImage(config []byte, parent string) (builder.Image, error)
 	ImageDelete(ctx context.Context, imageRef string, force, prune bool) ([]types.ImageDeleteResponseItem, error)
 	ExportImage(ctx context.Context, names []string, outStream io.Writer) error
-	PerformWithBaseFS(ctx context.Context, c *container.Container, fn func(string) error) error
 	LoadImage(ctx context.Context, inTar io.ReadCloser, outStream io.Writer, quiet bool) error
 	Images(ctx context.Context, opts types.ImageListOptions) ([]*types.ImageSummary, error)
 	LogImageEvent(imageID, refName, action string)
 	LogImageEventWithAttributes(imageID, refName, action string, attributes map[string]string)
 	CountImages() int
+	// ImageDiskUsage(ctx context.Context) ([]*types.ImageSummary, error)
 	ImagesPrune(ctx context.Context, pruneFilters filters.Args) (*types.ImagesPruneReport, error)
-	ImportImage(ctx context.Context, ref reference.Named, platform *v1.Platform, msg string, layerReader io.Reader, changes []string) (image.ID, error)
-	TagImage(ctx context.Context, imageID image.ID, newTag reference.Named) error
+	ImportImage(ctx context.Context, src string, repository string, platform *v1.Platform, tag string, msg string, inConfig io.ReadCloser, outStream io.Writer, changes []string) error
+	TagImage(imageName, repository, tag string) (string, error)
+	TagImageWithReference(imageID image.ID, newTag reference.Named) error
 	GetImage(ctx context.Context, refOrID string, options imagetype.GetImageOpts) (*image.Image, error)
 	ImageHistory(ctx context.Context, name string) ([]*imagetype.HistoryResponseItem, error)
-	CommitImage(ctx context.Context, c backend.CommitConfig) (image.ID, error)
+	CommitImage(c backend.CommitConfig) (image.ID, error)
 	SquashImage(id, parent string) (string, error)
-
-	// Containerd related methods
-
-	PrepareSnapshot(ctx context.Context, id string, image string, platform *v1.Platform) error
-	GetImageManifest(ctx context.Context, refOrID string, options imagetype.GetImageOpts) (*v1.Descriptor, error)
 
 	// Layers
 
 	GetImageAndReleasableLayer(ctx context.Context, refOrID string, opts backend.GetImageAndLayerOptions) (builder.Image, builder.ROLayer, error)
 	CreateLayer(container *container.Container, initFunc layer.MountInit) (layer.RWLayer, error)
+	GetLayerByID(cid string) (layer.RWLayer, error)
 	LayerStoreStatus() [][2]string
 	GetLayerMountID(cid string) (string, error)
 	ReleaseLayer(rwlayer layer.RWLayer) error
 	LayerDiskUsage(ctx context.Context) (int64, error)
-	GetContainerLayerSize(ctx context.Context, containerID string) (int64, int64, error)
-	Mount(ctx context.Context, container *container.Container) error
-	Unmount(ctx context.Context, container *container.Container) error
+	GetContainerLayerSize(containerID string) (int64, int64)
 
 	// Windows specific
 
@@ -68,11 +63,12 @@ type ImageService interface {
 	// Build
 
 	MakeImageCache(ctx context.Context, cacheFrom []string) (builder.ImageCache, error)
-	CommitBuildStep(ctx context.Context, c backend.CommitConfig) (image.ID, error)
+	CommitBuildStep(c backend.CommitConfig) (image.ID, error)
 
 	// Other
 
 	GetRepository(ctx context.Context, ref reference.Named, authConfig *registry.AuthConfig) (distribution.Repository, error)
+	SearchRegistryForImages(ctx context.Context, searchFilters filters.Args, term string, limit int, authConfig *registry.AuthConfig, headers map[string][]string) (*registry.SearchResults, error)
 	DistributionServices() images.DistributionServices
 	Children(id image.ID) []image.ID
 	Cleanup() error

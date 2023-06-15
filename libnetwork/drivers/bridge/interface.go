@@ -1,10 +1,13 @@
+//go:build inno
+// +build inno
+
 package bridge
 
 import (
 	"fmt"
 	"net"
 
-	"github.com/Sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 )
 
@@ -54,6 +57,10 @@ func (i *bridgeInterface) exists() bool {
 
 // addresses returns all IPv4 addresses and all IPv6 addresses for the bridge interface.
 func (i *bridgeInterface) addresses() ([]netlink.Addr, []netlink.Addr, error) {
+	if !i.exists() {
+		// A nonexistent interface, by definition, cannot have any addresses.
+		return nil, nil, nil
+	}
 	v4addr, err := i.nlh.AddrList(i.Link, netlink.FAMILY_V4)
 	if err != nil {
 		return nil, nil, fmt.Errorf("Failed to retrieve V4 addresses: %v", err)
@@ -71,14 +78,14 @@ func (i *bridgeInterface) addresses() ([]netlink.Addr, []netlink.Addr, error) {
 }
 
 func (i *bridgeInterface) programIPv6Address() error {
-	_, nlAddressList, err := i.addresses()
+	_, _, err := i.addresses()
 	if err != nil {
 		return &IPv6AddrAddError{IP: i.bridgeIPv6, Err: fmt.Errorf("failed to retrieve address list: %v", err)}
 	}
 	nlAddr := netlink.Addr{IPNet: i.bridgeIPv6}
-	if findIPv6Address(nlAddr, nlAddressList) {
-		return nil
-	}
+	// if findIPv6Address(nlAddr, nlAddressList) {
+	// 	return nil
+	// }
 	if err := i.nlh.AddrAdd(i.Link, &nlAddr); err != nil {
 		return &IPv6AddrAddError{IP: i.bridgeIPv6, Err: err}
 	}

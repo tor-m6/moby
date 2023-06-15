@@ -1,3 +1,6 @@
+//go:build linux
+// +build linux
+
 package overlay
 
 import (
@@ -5,10 +8,11 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/Sirupsen/logrus"
-	"github.com/docker/libnetwork/netutils"
-	"github.com/docker/libnetwork/ns"
-	"github.com/docker/libnetwork/osl"
+	"github.com/docker/docker/libnetwork/drivers/overlay/overlayutils"
+	"github.com/docker/docker/libnetwork/netutils"
+	"github.com/docker/docker/libnetwork/ns"
+	"github.com/docker/docker/libnetwork/osl"
+	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
 )
@@ -61,7 +65,7 @@ func createVxlan(name string, vni uint32, mtu int) error {
 		LinkAttrs: netlink.LinkAttrs{Name: name, MTU: mtu},
 		VxlanId:   int(vni),
 		Learning:  true,
-		Port:      vxlanPort,
+		Port:      int(overlayutils.VXLANUDPPort()),
 		Proxy:     true,
 		L3miss:    true,
 		L2miss:    true,
@@ -102,7 +106,6 @@ func deleteInterfaceBySubnet(brPrefix string, s *subnet) error {
 		}
 	}
 	return nil
-
 }
 
 func deleteInterface(name string) error {
@@ -135,7 +138,7 @@ func deleteVxlanByVNI(path string, vni uint32) error {
 		if err != nil {
 			return fmt.Errorf("failed to get netlink handle for ns %s: %v", path, err)
 		}
-		defer nlh.Delete()
+		defer nlh.Close()
 		err = nlh.SetSocketTimeout(soTimeout)
 		if err != nil {
 			logrus.Warnf("Failed to set the timeout on the netlink handle sockets for vxlan deletion: %v", err)

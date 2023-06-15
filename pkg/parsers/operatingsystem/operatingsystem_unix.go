@@ -1,21 +1,27 @@
-//go:build freebsd || darwin
-// +build freebsd darwin
+//go:build freebsd || darwin || inno
+// +build freebsd darwin inno
 
 package operatingsystem // import "github.com/docker/docker/pkg/parsers/operatingsystem"
 
 import (
 	"errors"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
 
 // GetOperatingSystem gets the name of the current operating system.
 func GetOperatingSystem() (string, error) {
-	utsname := &unix.Utsname{}
+	utsname := &syscall.Utsname{}
 	if err := unix.Uname(utsname); err != nil {
 		return "", err
 	}
-	return unix.ByteSliceToString(utsname.Machine[:]), nil
+	b := make([]byte, len(utsname.Machine))
+    for i, v := range utsname.Machine {
+        b[i] = byte(v)
+    }
+
+	return unix.ByteSliceToString(b[:]), nil
 }
 
 // GetOperatingSystemVersion gets the version of the current operating system, as a string.

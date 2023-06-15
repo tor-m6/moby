@@ -1,3 +1,6 @@
+//go:build linux
+// +build linux
+
 package overlay
 
 import (
@@ -7,9 +10,10 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/Sirupsen/logrus"
-	"github.com/docker/libnetwork/common"
-	"github.com/docker/libnetwork/osl"
+	"github.com/docker/docker/libnetwork/internal/caller"
+	"github.com/docker/docker/libnetwork/internal/setmatrix"
+	"github.com/docker/docker/libnetwork/osl"
+	"github.com/sirupsen/logrus"
 )
 
 const ovPeerTable = "overlay_peer_table"
@@ -59,7 +63,7 @@ func (p *peerEntryDB) UnMarshalDB() peerEntry {
 
 type peerMap struct {
 	// set of peerEntry, note they have to be objects and not pointers to maintain the proper equality checks
-	mp common.SetMatrix
+	mp setmatrix.SetMatrix
 	sync.Mutex
 }
 
@@ -128,6 +132,7 @@ func (d *driver) peerDbNetworkWalk(nid string, f func(*peerKey, *peerEntry) bool
 
 	for pKeyStr, pEntry := range mp {
 		var pKey peerKey
+		pEntry := pEntry
 		if _, err := fmt.Sscan(pKeyStr, &pKey); err != nil {
 			logrus.Warnf("Peer key scan on network %s failed: %v", nid, err)
 		}
@@ -163,14 +168,12 @@ func (d *driver) peerDbSearch(nid string, peerIP net.IP) (*peerKey, *peerEntry, 
 	return pKeyMatched, pEntryMatched, nil
 }
 
-func (d *driver) peerDbAdd(nid, eid string, peerIP net.IP, peerIPMask net.IPMask,
-	peerMac net.HardwareAddr, vtep net.IP, isLocal bool) (bool, int) {
-
+func (d *driver) peerDbAdd(nid, eid string, peerIP net.IP, peerIPMask net.IPMask, peerMac net.HardwareAddr, vtep net.IP, isLocal bool) (bool, int) {
 	d.peerDb.Lock()
 	pMap, ok := d.peerDb.mp[nid]
 	if !ok {
 		d.peerDb.mp[nid] = &peerMap{
-			mp: common.NewSetMatrix(),
+			mp: setmatrix.NewSetMatrix(),
 		}
 
 		pMap = d.peerDb.mp[nid]
@@ -200,9 +203,7 @@ func (d *driver) peerDbAdd(nid, eid string, peerIP net.IP, peerIPMask net.IPMask
 	return b, i
 }
 
-func (d *driver) peerDbDelete(nid, eid string, peerIP net.IP, peerIPMask net.IPMask,
-	peerMac net.HardwareAddr, vtep net.IP, isLocal bool) (bool, int) {
-
+func (d *driver) peerDbDelete(nid, eid string, peerIP net.IP, peerIPMask net.IPMask, peerMac net.HardwareAddr, vtep net.IP, isLocal bool) (bool, int) {
 	d.peerDb.Lock()
 	pMap, ok := d.peerDb.mp[nid]
 	if !ok {
@@ -297,7 +298,7 @@ func (d *driver) peerOpRoutine(ctx context.Context, ch chan *peerOperation) {
 }
 
 func (d *driver) peerInit(nid string) {
-	callerName := common.CallerName(1)
+	callerName := caller.Name(1)
 	d.peerOpCh <- &peerOperation{
 		opType:     peerOperationINIT,
 		networkID:  nid,
@@ -331,13 +332,11 @@ func (d *driver) peerAdd(nid, eid string, peerIP net.IP, peerIPMask net.IPMask,
 		l2Miss:     l2Miss,
 		l3Miss:     l3Miss,
 		localPeer:  localPeer,
-		callerName: common.CallerName(1),
+		callerName: caller.Name(1),
 	}
 }
 
-func (d *driver) peerAddOp(nid, eid string, peerIP net.IP, peerIPMask net.IPMask,
-	peerMac net.HardwareAddr, vtep net.IP, l2Miss, l3Miss, updateDB, localPeer bool) error {
-
+func (d *driver) peerAddOp(nid, eid string, peerIP net.IP, peerIPMask net.IPMask, peerMac net.HardwareAddr, vtep net.IP, l2Miss, l3Miss, updateDB, localPeer bool) error {
 	if err := validateID(nid, eid); err != nil {
 		return err
 	}
@@ -384,7 +383,7 @@ func (d *driver) peerAddOp(nid, eid string, peerIP net.IP, peerIPMask net.IPMask
 		return fmt.Errorf("couldn't get vxlan id for %q: %v", s.subnetIP.String(), err)
 	}
 
-	if err := n.joinSubnetSandbox(s, false); err != nil {
+	if err := n.joinSandbox(s, false, false); err != nil {
 		return fmt.Errorf("subnet sandbox join failed for %q: %v", s.subnetIP.String(), err)
 	}
 
@@ -422,14 +421,12 @@ func (d *driver) peerDelete(nid, eid string, peerIP net.IP, peerIPMask net.IPMas
 		peerIPMask: peerIPMask,
 		peerMac:    peerMac,
 		vtepIP:     vtep,
-		callerName: common.CallerName(1),
+		callerName: caller.Name(1),
 		localPeer:  localPeer,
 	}
 }
 
-func (d *driver) peerDeleteOp(nid, eid string, peerIP net.IP, peerIPMask net.IPMask,
-	peerMac net.HardwareAddr, vtep net.IP, localPeer bool) error {
-
+func (d *driver) peerDeleteOp(nid, eid string, peerIP net.IP, peerIPMask net.IPMask, peerMac net.HardwareAddr, vtep net.IP, localPeer bool) error {
 	if err := validateID(nid, eid); err != nil {
 		return err
 	}
@@ -491,7 +488,7 @@ func (d *driver) peerFlush(nid string) {
 	d.peerOpCh <- &peerOperation{
 		opType:     peerOperationFLUSH,
 		networkID:  nid,
-		callerName: common.CallerName(1),
+		callerName: caller.Name(1),
 	}
 }
 

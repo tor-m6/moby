@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"github.com/docker/docker/mystrings"
 
 	"github.com/docker/docker/pkg/homedir"
 	"github.com/pkg/errors"
@@ -61,7 +60,8 @@ func ParseHost(defaultToTLS, defaultToUnixXDG bool, val string) (string, error) 
 			if err != nil {
 				return "", err
 			}
-			host = "unix://" + filepath.Join(runtimeDir, "docker.sock")
+			socket := filepath.Join(runtimeDir, "docker.sock")
+			host = "unix://" + socket
 		} else {
 			host = DefaultHost
 		}
@@ -77,32 +77,23 @@ func ParseHost(defaultToTLS, defaultToUnixXDG bool, val string) (string, error) 
 
 // parseDaemonHost parses the specified address and returns an address that will be used as the host.
 // Depending on the address specified, this may return one of the global Default* strings defined in hosts.go.
-func parseDaemonHost(address string) (string, error) {
-	proto, addr, ok := mystrings.Cut(address, "://")
-	if !ok && proto != "" {
-		addr = proto
-		proto = "tcp"
+func parseDaemonHost(addr string) (string, error) {
+	addrParts := strings.SplitN(addr, "://", 2)
+	if len(addrParts) == 1 && addrParts[0] != "" {
+		addrParts = []string{"tcp", addrParts[0]}
 	}
 
-	switch proto {
+	switch addrParts[0] {
 	case "tcp":
-		return ParseTCPAddr(address, DefaultTCPHost)
+		return ParseTCPAddr(addr, DefaultTCPHost)
 	case "unix":
-		a, err := parseSimpleProtoAddr(proto, addr, DefaultUnixSocket)
-		if err != nil {
-			return "", errors.Wrapf(err, "invalid bind address (%s)", address)
-		}
-		return a, nil
+		return parseSimpleProtoAddr("unix", addrParts[1], DefaultUnixSocket)
 	case "npipe":
-		a, err := parseSimpleProtoAddr(proto, addr, DefaultNamedPipe)
-		if err != nil {
-			return "", errors.Wrapf(err, "invalid bind address (%s)", address)
-		}
-		return a, nil
+		return parseSimpleProtoAddr("npipe", addrParts[1], DefaultNamedPipe)
 	case "fd":
-		return address, nil
+		return addr, nil
 	default:
-		return "", errors.Errorf("invalid bind address (%s): unsupported proto '%s'", address, proto)
+		return "", errors.Errorf("invalid bind address (%s): unsupported proto '%s'", addr, addrParts[0])
 	}
 }
 
@@ -111,8 +102,9 @@ func parseDaemonHost(address string) (string, error) {
 // socket address, either using the address parsed from addr, or the contents of
 // defaultAddr if addr is a blank string.
 func parseSimpleProtoAddr(proto, addr, defaultAddr string) (string, error) {
+	addr = strings.TrimPrefix(addr, proto+"://")
 	if strings.Contains(addr, "://") {
-		return "", errors.Errorf("invalid %s address: %s", proto, addr)
+		return "", errors.Errorf("invalid proto, expected %s: %s", proto, addr)
 	}
 	if addr == "" {
 		addr = defaultAddr
@@ -180,14 +172,14 @@ func parseTCPAddr(address string, strict bool) (*url.URL, error) {
 // ExtraHost is in the form of name:ip where the ip has to be a valid ip (IPv4 or IPv6).
 func ValidateExtraHost(val string) (string, error) {
 	// allow for IPv6 addresses in extra hosts by only splitting on first ":"
-	name, ip, ok := mystrings.Cut(val, ":")
-	if !ok || name == "" {
+	arr := strings.SplitN(val, ":", 2)
+	if len(arr) != 2 || len(arr[0]) == 0 {
 		return "", errors.Errorf("bad format for add-host: %q", val)
 	}
 	// Skip IPaddr validation for special "host-gateway" string
-	if ip != HostGatewayName {
-		if _, err := ValidateIPAddress(ip); err != nil {
-			return "", errors.Errorf("invalid IP address in add-host: %q", ip)
+	if arr[1] != HostGatewayName {
+		if _, err := ValidateIPAddress(arr[1]); err != nil {
+			return "", errors.Errorf("invalid IP address in add-host: %q", arr[1])
 		}
 	}
 	return val, nil

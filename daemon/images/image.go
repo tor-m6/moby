@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 
 	"github.com/containerd/containerd/content"
 	c8derrdefs "github.com/containerd/containerd/errdefs"
@@ -19,7 +18,6 @@ import (
 	"github.com/docker/docker/layer"
 	"github.com/opencontainers/go-digest"
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
-	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -48,15 +46,10 @@ type manifest struct {
 	Config specs.Descriptor `json:"config"`
 }
 
-func (i *ImageService) PrepareSnapshot(ctx context.Context, id string, image string, platform *v1.Platform) error {
-	// Only makes sense when conatinerd image store is used
-	panic("not implemented")
-}
-
 func (i *ImageService) manifestMatchesPlatform(ctx context.Context, img *image.Image, platform specs.Platform) (bool, error) {
 	logger := logrus.WithField("image", img.ID).WithField("desiredPlatform", platforms.Format(platform))
 
-	ls, leaseErr := i.leases.ListResources(ctx, leases.Lease{ID: imageKey(img.ID().String())})
+	ls, leaseErr := i.leases.ListResources(ctx, leases.Lease{ID: imageKey(img.ID().Digest())})
 	if leaseErr != nil {
 		logger.WithError(leaseErr).Error("Error looking up image leases")
 		return false, leaseErr
@@ -91,7 +84,7 @@ func (i *ImageService) manifestMatchesPlatform(ctx context.Context, img *image.I
 			continue
 		}
 
-		data, err := ioutil.ReadAll(makeRdr(ra))
+		data, err := io.ReadAll(makeRdr(ra))
 		ra.Close()
 
 		if err != nil {
@@ -131,7 +124,7 @@ func (i *ImageService) manifestMatchesPlatform(ctx context.Context, img *image.I
 				continue
 			}
 
-			data, err := ioutil.ReadAll(makeRdr(ra))
+			data, err := io.ReadAll(makeRdr(ra))
 			ra.Close()
 			if err != nil {
 				logger.WithError(err).Error("Error reading manifest for image")
@@ -193,10 +186,6 @@ func (i *ImageService) GetImage(ctx context.Context, refOrID string, options ima
 	return img, nil
 }
 
-func (i *ImageService) GetImageManifest(ctx context.Context, refOrID string, options imagetypes.GetImageOpts) (*v1.Descriptor, error) {
-	panic("not implemented")
-}
-
 func (i *ImageService) getImage(ctx context.Context, refOrID string, options imagetypes.GetImageOpts) (retImg *image.Image, retErr error) {
 	defer func() {
 		if retErr != nil || retImg == nil || options.Platform == nil {
@@ -242,15 +231,17 @@ func (i *ImageService) getImage(ctx context.Context, refOrID string, options ima
 		if !ok {
 			return nil, ErrImageDoesNotExist{ref}
 		}
-		if img, err := i.imageStore.Get(image.ID(digested.Digest())); err == nil {
+		id := image.IDFromDigest(digested.Digest())
+		if img, err := i.imageStore.Get(id); err == nil {
 			return img, nil
 		}
 		return nil, ErrImageDoesNotExist{ref}
 	}
 
-	if dgst, err := i.referenceStore.Get(namedRef); err == nil {
+	if digest, err := i.referenceStore.Get(namedRef); err == nil {
 		// Search the image stores to get the operating system, defaulting to host OS.
-		if img, err := i.imageStore.Get(image.ID(dgst)); err == nil {
+		id := image.IDFromDigest(digest)
+		if img, err := i.imageStore.Get(id); err == nil {
 			return img, nil
 		}
 	}

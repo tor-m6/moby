@@ -1,25 +1,17 @@
 
 # fwd
+    import "github.com/philhofer/fwd"
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/philhofer/fwd.svg)](https://pkg.go.dev/github.com/philhofer/fwd)
-
-
-`import "github.com/philhofer/fwd"`
-
-* [Overview](#pkg-overview)
-* [Index](#pkg-index)
-
-## <a name="pkg-overview">Overview</a>
-Package fwd provides a buffered reader
+The `fwd` package provides a buffered reader
 and writer. Each has methods that help improve
 the encoding/decoding performance of some binary
 protocols.
 
-The `Writer` and `Reader` type provide similar
+The `fwd.Writer` and `fwd.Reader` type provide similar
 functionality to their counterparts in `bufio`, plus
 a few extra utility methods that simplify read-ahead
 and write-ahead. I wrote this package to improve serialization
-performance for [github.com/tinylib/msgp](https://github.com/tinylib/msgp),
+performance for <a href="http://github.com/tinylib/msgp">http://github.com/tinylib/msgp</a>,
 where it provided about a 2x speedup over `bufio` for certain
 workloads. However, care must be taken to understand the semantics of the
 extra methods provided by this package, as they allow
@@ -47,37 +39,7 @@ to write directly to the end of the buffer.
 
 
 
-## <a name="pkg-index">Index</a>
-* [Constants](#pkg-constants)
-* [type Reader](#Reader)
-  * [func NewReader(r io.Reader) *Reader](#NewReader)
-  * [func NewReaderBuf(r io.Reader, buf []byte) *Reader](#NewReaderBuf)
-  * [func NewReaderSize(r io.Reader, n int) *Reader](#NewReaderSize)
-  * [func (r *Reader) BufferSize() int](#Reader.BufferSize)
-  * [func (r *Reader) Buffered() int](#Reader.Buffered)
-  * [func (r *Reader) Next(n int) ([]byte, error)](#Reader.Next)
-  * [func (r *Reader) Peek(n int) ([]byte, error)](#Reader.Peek)
-  * [func (r *Reader) Read(b []byte) (int, error)](#Reader.Read)
-  * [func (r *Reader) ReadByte() (byte, error)](#Reader.ReadByte)
-  * [func (r *Reader) ReadFull(b []byte) (int, error)](#Reader.ReadFull)
-  * [func (r *Reader) Reset(rd io.Reader)](#Reader.Reset)
-  * [func (r *Reader) Skip(n int) (int, error)](#Reader.Skip)
-  * [func (r *Reader) WriteTo(w io.Writer) (int64, error)](#Reader.WriteTo)
-* [type Writer](#Writer)
-  * [func NewWriter(w io.Writer) *Writer](#NewWriter)
-  * [func NewWriterBuf(w io.Writer, buf []byte) *Writer](#NewWriterBuf)
-  * [func NewWriterSize(w io.Writer, n int) *Writer](#NewWriterSize)
-  * [func (w *Writer) BufferSize() int](#Writer.BufferSize)
-  * [func (w *Writer) Buffered() int](#Writer.Buffered)
-  * [func (w *Writer) Flush() error](#Writer.Flush)
-  * [func (w *Writer) Next(n int) ([]byte, error)](#Writer.Next)
-  * [func (w *Writer) ReadFrom(r io.Reader) (int64, error)](#Writer.ReadFrom)
-  * [func (w *Writer) Write(p []byte) (int, error)](#Writer.Write)
-  * [func (w *Writer) WriteByte(b byte) error](#Writer.WriteByte)
-  * [func (w *Writer) WriteString(s string) (int, error)](#Writer.WriteString)
-
-
-## <a name="pkg-constants">Constants</a>
+## Constants
 ``` go
 const (
     // DefaultReaderSize is the default size of the read buffer
@@ -159,7 +121,7 @@ and the reader position will not be incremented.
 
 
 
-### <a name="Reader.Peek">func</a> (\*Reader) Peek
+### func (\*Reader) Peek
 ``` go
 func (r *Reader) Peek(n int) ([]byte, error)
 ```
@@ -172,23 +134,23 @@ io.ErrUnexpectedEOF.
 
 
 
-### <a name="Reader.Read">func</a> (\*Reader) Read
+### func (\*Reader) Read
 ``` go
 func (r *Reader) Read(b []byte) (int, error)
 ```
-Read implements `io.Reader`.
+Read implements `io.Reader`
 
 
 
-### <a name="Reader.ReadByte">func</a> (\*Reader) ReadByte
+### func (\*Reader) ReadByte
 ``` go
 func (r *Reader) ReadByte() (byte, error)
 ```
-ReadByte implements `io.ByteReader`.
+ReadByte implements `io.ByteReader`
 
 
 
-### <a name="Reader.ReadFull">func</a> (\*Reader) ReadFull
+### func (\*Reader) ReadFull
 ``` go
 func (r *Reader) ReadFull(b []byte) (int, error)
 ```
@@ -199,7 +161,7 @@ EOF is considered an unexpected error.
 
 
 
-### <a name="Reader.Reset">func</a> (\*Reader) Reset
+### func (\*Reader) Reset
 ``` go
 func (r *Reader) Reset(rd io.Reader)
 ```
@@ -208,7 +170,7 @@ and the read buffer.
 
 
 
-### <a name="Reader.Skip">func</a> (\*Reader) Skip
+### func (\*Reader) Skip
 ``` go
 func (r *Reader) Skip(n int) (int, error)
 ```
@@ -220,30 +182,27 @@ that method will be used to skip forward.
 
 If the reader encounters
 an EOF before skipping 'n' bytes, it
-returns `io.ErrUnexpectedEOF`. If the
-underlying reader implements `io.Seeker`, then
+returns io.ErrUnexpectedEOF. If the
+underlying reader implements io.Seeker, then
 those rules apply instead. (Many implementations
 will not return `io.EOF` until the next call
-to Read).
+to Read.)
 
 
 
-
-### <a name="Reader.WriteTo">func</a> (\*Reader) WriteTo
+### func (\*Reader) WriteTo
 ``` go
 func (r *Reader) WriteTo(w io.Writer) (int64, error)
 ```
-WriteTo implements `io.WriterTo`.
+WriteTo implements `io.WriterTo`
 
 
 
-
-## <a name="Writer">type</a> Writer
+## type Writer
 ``` go
 type Writer struct {
     // contains filtered or unexported fields
 }
-
 ```
 Writer is a buffered writer
 
@@ -253,7 +212,9 @@ Writer is a buffered writer
 
 
 
-### <a name="NewWriter">func</a> NewWriter
+
+
+### func NewWriter
 ``` go
 func NewWriter(w io.Writer) *Writer
 ```
@@ -262,24 +223,18 @@ that writes to 'w' and has a buffer
 that is `DefaultWriterSize` bytes.
 
 
-### <a name="NewWriterBuf">func</a> NewWriterBuf
+### func NewWriterSize
 ``` go
-func NewWriterBuf(w io.Writer, buf []byte) *Writer
+func NewWriterSize(w io.Writer, size int) *Writer
 ```
-NewWriterBuf returns a new writer
-that writes to 'w' and has 'buf' as a buffer.
-'buf' is not used when has smaller capacity than 18,
-custom buffer is allocated instead.
+NewWriterSize returns a new writer
+that writes to 'w' and has a buffer
+that is 'size' bytes.
 
 
-### <a name="NewWriterSize">func</a> NewWriterSize
-``` go
-func NewWriterSize(w io.Writer, n int) *Writer
-```
-NewWriterSize returns a new writer that
-writes to 'w' and has a buffer size 'n'.
 
-### <a name="Writer.BufferSize">func</a> (\*Writer) BufferSize
+
+### func (\*Writer) BufferSize
 ``` go
 func (w *Writer) BufferSize() int
 ```
@@ -287,7 +242,7 @@ BufferSize returns the maximum size of the buffer.
 
 
 
-### <a name="Writer.Buffered">func</a> (\*Writer) Buffered
+### func (\*Writer) Buffered
 ``` go
 func (w *Writer) Buffered() int
 ```
@@ -296,7 +251,7 @@ in the reader.
 
 
 
-### <a name="Writer.Flush">func</a> (\*Writer) Flush
+### func (\*Writer) Flush
 ``` go
 func (w *Writer) Flush() error
 ```
@@ -305,7 +260,7 @@ to the underlying writer.
 
 
 
-### <a name="Writer.Next">func</a> (\*Writer) Next
+### func (\*Writer) Next
 ``` go
 func (w *Writer) Next(n int) ([]byte, error)
 ```
@@ -318,7 +273,7 @@ the size of the returned buffer.
 
 
 
-### <a name="Writer.ReadFrom">func</a> (\*Writer) ReadFrom
+### func (\*Writer) ReadFrom
 ``` go
 func (w *Writer) ReadFrom(r io.Reader) (int64, error)
 ```
@@ -326,7 +281,7 @@ ReadFrom implements `io.ReaderFrom`
 
 
 
-### <a name="Writer.Write">func</a> (\*Writer) Write
+### func (\*Writer) Write
 ``` go
 func (w *Writer) Write(p []byte) (int, error)
 ```
@@ -334,7 +289,7 @@ Write implements `io.Writer`
 
 
 
-### <a name="Writer.WriteByte">func</a> (\*Writer) WriteByte
+### func (\*Writer) WriteByte
 ``` go
 func (w *Writer) WriteByte(b byte) error
 ```
@@ -342,7 +297,7 @@ WriteByte implements `io.ByteWriter`
 
 
 
-### <a name="Writer.WriteString">func</a> (\*Writer) WriteString
+### func (\*Writer) WriteString
 ``` go
 func (w *Writer) WriteString(s string) (int, error)
 ```
@@ -355,5 +310,6 @@ WriteString is analogous to Write, but it takes a string.
 
 
 
+
 - - -
-Generated by [godoc2md](https://github.com/davecheney/godoc2md)
+Generated by [godoc2md](http://godoc.org/github.com/davecheney/godoc2md)

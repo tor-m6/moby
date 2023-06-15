@@ -63,19 +63,6 @@ func (e notFoundError) Cause() error {
 	return e.cause
 }
 
-// unsupportedMediaTypeError is an error issued when attempted
-// to pull unsupported content.
-type unsupportedMediaTypeError struct {
-	MediaType string
-}
-
-func (e unsupportedMediaTypeError) InvalidParameter() {}
-
-// Error returns the error string for unsupportedMediaTypeError.
-func (e unsupportedMediaTypeError) Error() string {
-	return "unsupported media type " + e.MediaType
-}
-
 // translatePullError is used to convert an error from a registry pull
 // operation to an error representing the entire pull operation. Any error
 // information which is not used by the returned error gets output to
@@ -137,8 +124,6 @@ func continueOnError(err error, mirrorEndpoint bool) bool {
 		// Failures from a mirror endpoint should result in fallback to the
 		// canonical repo.
 		return mirrorEndpoint
-	case unsupportedMediaTypeError:
-		return false
 	case error:
 		return !strings.Contains(err.Error(), strings.ToLower(syscall.ESRCH.Error()))
 	}
@@ -168,7 +153,7 @@ func retryOnError(err error) error {
 			return xfer.DoNotRetry{Err: v.Err}
 		}
 		return retryOnError(v.Err)
-	case *client.UnexpectedHTTPResponseError, unsupportedMediaTypeError:
+	case *client.UnexpectedHTTPResponseError:
 		return xfer.DoNotRetry{Err: err}
 	case error:
 		if err == distribution.ErrBlobUnknown {

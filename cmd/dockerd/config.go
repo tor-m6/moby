@@ -7,6 +7,9 @@ import (
 	"github.com/spf13/pflag"
 )
 
+// defaultTrustKeyFile is the default filename for the trust key
+const defaultTrustKeyFile = "key.json"
+
 // installCommonConfigFlags adds flags to the pflag.FlagSet to configure the daemon
 func installCommonConfigFlags(conf *config.Config, flags *pflag.FlagSet) error {
 	var (
@@ -27,7 +30,6 @@ func installCommonConfigFlags(conf *config.Config, flags *pflag.FlagSet) error {
 	flags.StringVar(&conf.ContainerdAddr, "containerd", "", "containerd grpc address")
 	flags.BoolVar(&conf.CriContainerd, "cri-containerd", false, "start containerd with cri")
 
-	flags.Var(opts.NewNamedMapMapOpts("default-network-opts", conf.DefaultNetworkOpts, nil), "default-network-opt", "Default network options")
 	flags.IntVar(&conf.Mtu, "mtu", conf.Mtu, "Set the containers network MTU")
 	flags.IntVar(&conf.NetworkControlPlaneMTU, "network-control-plane-mtu", conf.NetworkControlPlaneMTU, "Network Control plane MTU")
 	flags.IntVar(&conf.NetworkDiagnosticPort, "network-diagnostic-port", 0, "TCP port number of the network diagnostic server")
@@ -63,6 +65,9 @@ func installCommonConfigFlags(conf *config.Config, flags *pflag.FlagSet) error {
 
 	// Deprecated flags / options
 
+	//nolint:staticcheck // TODO(thaJeztah): remove in next release.
+	flags.StringVarP(&conf.RootDeprecated, "graph", "g", conf.RootDeprecated, "Root of the Docker runtime")
+	_ = flags.MarkDeprecated("graph", "Use --data-root instead")
 	flags.BoolVarP(&conf.AutoRestart, "restart", "r", true, "--restart on the daemon has been deprecated in favor of --restart policies on docker run")
 	_ = flags.MarkDeprecated("restart", "Please use a restart policy on docker run")
 

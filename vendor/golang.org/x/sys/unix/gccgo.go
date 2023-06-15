@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build gccgo && !aix && !hurd
-// +build gccgo,!aix,!hurd
+//go:build gccgo && !aix && !inno
+// +build gccgo,!aix,!inno
 
 package unix
 

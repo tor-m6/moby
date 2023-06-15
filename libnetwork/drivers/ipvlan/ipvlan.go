@@ -1,28 +1,36 @@
+//go:build linux
+// +build linux
+
 package ipvlan
 
 import (
 	"net"
 	"sync"
 
-	"github.com/docker/libnetwork/datastore"
-	"github.com/docker/libnetwork/discoverapi"
-	"github.com/docker/libnetwork/driverapi"
-	"github.com/docker/libnetwork/osl"
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/datastore"
+	"github.com/docker/docker/libnetwork/discoverapi"
+	"github.com/docker/docker/libnetwork/driverapi"
+	"github.com/docker/docker/libnetwork/types"
 )
 
 const (
 	vethLen             = 7
 	containerVethPrefix = "eth"
 	vethPrefix          = "veth"
-	ipvlanType          = "ipvlan" // driver type name
-	modeL2              = "l2"     // ipvlan mode l2 is the default
-	modeL3              = "l3"     // ipvlan L3 mode
-	parentOpt           = "parent" // parent interface -o parent
-	modeOpt             = "_mode"  // ipvlan mode ux opt suffix
-)
 
-var driverModeOpt = ipvlanType + modeOpt // mode -o ipvlan_mode
+	driverName    = "ipvlan"      // driver type name
+	parentOpt     = "parent"      // parent interface -o parent
+	driverModeOpt = "ipvlan_mode" // mode -o ipvlan_mode
+	driverFlagOpt = "ipvlan_flag" // flag -o ipvlan_flag
+
+	modeL2  = "l2"  // ipvlan L2 mode (default)
+	modeL3  = "l3"  // ipvlan L3 mode
+	modeL3S = "l3s" // ipvlan L3S mode
+
+	flagBridge  = "bridge"  // ipvlan flag bridge (default)
+	flagPrivate = "private" // ipvlan flag private
+	flagVepa    = "vepa"    // ipvlan flag vepa
+)
 
 type endpointTable map[string]*endpoint
 
@@ -48,7 +56,6 @@ type endpoint struct {
 
 type network struct {
 	id        string
-	sbox      osl.Sandbox
 	endpoints endpointTable
 	driver    *driver
 	config    *configuration
@@ -64,9 +71,11 @@ func Init(dc driverapi.DriverCallback, config map[string]interface{}) error {
 	d := &driver{
 		networks: networkTable{},
 	}
-	d.initStore(config)
+	if err := d.initStore(config); err != nil {
+		return err
+	}
 
-	return dc.RegisterDriver(ipvlanType, d, c)
+	return dc.RegisterDriver(driverName, d, c)
 }
 
 func (d *driver) NetworkAllocate(id string, option map[string]string, ipV4Data, ipV6Data []driverapi.IPAMData) (map[string]string, error) {
@@ -78,11 +87,11 @@ func (d *driver) NetworkFree(id string) error {
 }
 
 func (d *driver) EndpointOperInfo(nid, eid string) (map[string]interface{}, error) {
-	return make(map[string]interface{}, 0), nil
+	return make(map[string]interface{}), nil
 }
 
 func (d *driver) Type() string {
-	return ipvlanType
+	return driverName
 }
 
 func (d *driver) IsBuiltIn() bool {

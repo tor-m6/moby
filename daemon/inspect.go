@@ -1,7 +1,6 @@
 package daemon // import "github.com/docker/docker/daemon"
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -20,19 +19,19 @@ import (
 // ContainerInspect returns low-level information about a
 // container. Returns an error if the container cannot be found, or if
 // there is an error getting the data.
-func (daemon *Daemon) ContainerInspect(ctx context.Context, name string, size bool, version string) (interface{}, error) {
+func (daemon *Daemon) ContainerInspect(name string, size bool, version string) (interface{}, error) {
 	switch {
 	case versions.LessThan(version, "1.20"):
-		return daemon.containerInspectPre120(ctx, name)
+		return daemon.containerInspectPre120(name)
 	case versions.Equal(version, "1.20"):
 		return daemon.containerInspect120(name)
 	}
-	return daemon.ContainerInspectCurrent(ctx, name, size)
+	return daemon.ContainerInspectCurrent(name, size)
 }
 
 // ContainerInspectCurrent returns low-level information about a
 // container in a most recent api version.
-func (daemon *Daemon) ContainerInspectCurrent(ctx context.Context, name string, size bool) (*types.ContainerJSON, error) {
+func (daemon *Daemon) ContainerInspectCurrent(name string, size bool) (*types.ContainerJSON, error) {
 	ctr, err := daemon.GetContainer(name)
 	if err != nil {
 		return nil, err
@@ -47,10 +46,10 @@ func (daemon *Daemon) ContainerInspectCurrent(ctx context.Context, name string, 
 	}
 
 	apiNetworks := make(map[string]*networktypes.EndpointSettings)
-	for nwName, epConf := range ctr.NetworkSettings.Networks {
+	for name, epConf := range ctr.NetworkSettings.Networks {
 		if epConf.EndpointSettings != nil {
 			// We must make a copy of this pointer object otherwise it can race with other operations
-			apiNetworks[nwName] = epConf.EndpointSettings.Copy()
+			apiNetworks[name] = epConf.EndpointSettings.Copy()
 		}
 	}
 
@@ -79,10 +78,7 @@ func (daemon *Daemon) ContainerInspectCurrent(ctx context.Context, name string, 
 	ctr.Unlock()
 
 	if size {
-		sizeRw, sizeRootFs, err := daemon.imageService.GetContainerLayerSize(ctx, base.ID)
-		if err != nil {
-			return nil, err
-		}
+		sizeRw, sizeRootFs := daemon.imageService.GetContainerLayerSize(base.ID)
 		base.SizeRw = &sizeRw
 		base.SizeRootFs = &sizeRootFs
 	}
@@ -97,30 +93,34 @@ func (daemon *Daemon) ContainerInspectCurrent(ctx context.Context, name string, 
 
 // containerInspect120 serializes the master version of a container into a json type.
 func (daemon *Daemon) containerInspect120(name string) (*v1p20.ContainerJSON, error) {
-	ctr, err := daemon.GetContainer(name)
+	container, err := daemon.GetContainer(name)
 	if err != nil {
 		return nil, err
 	}
 
-	ctr.Lock()
-	defer ctr.Unlock()
+	container.Lock()
+	defer container.Unlock()
 
-	base, err := daemon.getInspectData(ctr)
+	base, err := daemon.getInspectData(container)
 	if err != nil {
 		return nil, err
 	}
+
+	mountPoints := container.GetMountPoints()
+	config := &v1p20.ContainerConfig{
+		Config:          container.Config,
+		MacAddress:      container.Config.MacAddress,
+		NetworkDisabled: container.Config.NetworkDisabled,
+		ExposedPorts:    container.Config.ExposedPorts,
+		VolumeDriver:    container.HostConfig.VolumeDriver,
+	}
+	networkSettings := daemon.getBackwardsCompatibleNetworkSettings(container.NetworkSettings)
 
 	return &v1p20.ContainerJSON{
 		ContainerJSONBase: base,
-		Mounts:            ctr.GetMountPoints(),
-		Config: &v1p20.ContainerConfig{
-			Config:          ctr.Config,
-			MacAddress:      ctr.Config.MacAddress,
-			NetworkDisabled: ctr.Config.NetworkDisabled,
-			ExposedPorts:    ctr.Config.ExposedPorts,
-			VolumeDriver:    ctr.HostConfig.VolumeDriver,
-		},
-		NetworkSettings: daemon.getBackwardsCompatibleNetworkSettings(ctr.NetworkSettings),
+		Mounts:            mountPoints,
+		Config:            config,
+		NetworkSettings:   networkSettings,
 	}, nil
 }
 

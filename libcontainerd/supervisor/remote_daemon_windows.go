@@ -3,7 +3,7 @@ package supervisor // import "github.com/docker/docker/libcontainerd/supervisor"
 import (
 	"os"
 
-	"github.com/docker/docker/pkg/process"
+	"github.com/docker/docker/pkg/system"
 )
 
 const (
@@ -40,7 +40,7 @@ func (r *remote) stopDaemon() {
 }
 
 func (r *remote) killDaemon() {
-	process.Kill(r.daemonPid)
+	system.KillProcess(r.daemonPid)
 }
 
 func (r *remote) platformCleanup() {

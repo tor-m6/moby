@@ -3,8 +3,7 @@ package null
 import (
 	"testing"
 
-	_ "github.com/docker/libnetwork/testutils"
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/types"
 )
 
 func TestPoolRequest(t *testing.T) {
@@ -57,5 +56,4 @@ func TestOtherRequests(t *testing.T) {
 	if err == nil {
 		t.Fatal("Unexpected success")
 	}
-
 }

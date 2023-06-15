@@ -1,5 +1,5 @@
-//go:build linux || freebsd
-// +build linux freebsd
+//go:build linux || freebsd || inno
+// +build linux freebsd inno
 
 package initlayer // import "github.com/docker/docker/daemon/initlayer"
 

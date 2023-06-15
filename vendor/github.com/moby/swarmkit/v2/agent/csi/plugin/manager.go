@@ -18,9 +18,9 @@ const (
 	DockerCSIPluginCap = "csinode"
 )
 
-// Manager manages the multiple CSI plugins that may be in use on the
-// node. Manager should be thread-safe.
-type Manager interface {
+// PluginManager manages the multiple CSI plugins that may be in use on the
+// node. PluginManager should be thread-safe.
+type PluginManager interface {
 	// Get gets the plugin with the given name
 	Get(name string) (NodePlugin, error)
 
@@ -43,7 +43,7 @@ type pluginManager struct {
 	pg plugingetter.PluginGetter
 }
 
-func NewManager(pg plugingetter.PluginGetter, secrets SecretGetter) Manager {
+func NewPluginManager(pg plugingetter.PluginGetter, secrets SecretGetter) PluginManager {
 	return &pluginManager{
 		plugins:           map[string]NodePlugin{},
 		newNodePluginFunc: NewNodePlugin,

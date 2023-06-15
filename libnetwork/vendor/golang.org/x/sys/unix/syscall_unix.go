@@ -49,10 +49,10 @@ func errnoErr(e syscall.Errno) error {
 	return e
 }
 
-func Syscall(trap, a1, a2, a3 uintptr) (r1, r2 uintptr, err syscall.Errno)
-func Syscall6(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err syscall.Errno)
-func RawSyscall(trap, a1, a2, a3 uintptr) (r1, r2 uintptr, err syscall.Errno)
-func RawSyscall6(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err syscall.Errno)
+// func Syscall(trap, a1, a2, a3 uintptr) (r1, r2 uintptr, err syscall.Errno)
+// func Syscall6(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err syscall.Errno)
+// func RawSyscall(trap, a1, a2, a3 uintptr) (r1, r2 uintptr, err syscall.Errno)
+// func RawSyscall6(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err syscall.Errno)
 
 // Mmap manager, for use by operating system-specific implementations.
 
@@ -115,7 +115,7 @@ func (m *mmapper) Munmap(data []byte) (err error) {
 }
 
 func Read(fd int, p []byte) (n int, err error) {
-	n, err = read(fd, p)
+	n, err = Read(fd, p)
 	if raceenabled {
 		if n > 0 {
 			raceWriteRange(unsafe.Pointer(&p[0]), n)
@@ -131,7 +131,7 @@ func Write(fd int, p []byte) (n int, err error) {
 	if raceenabled {
 		raceReleaseMerge(unsafe.Pointer(&ioSync))
 	}
-	n, err = write(fd, p)
+	n, err = Write(fd, p)
 	if raceenabled && n > 0 {
 		raceReadRange(unsafe.Pointer(&p[0]), n)
 	}

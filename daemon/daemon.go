@@ -14,7 +14,6 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"sync"
 	"time"
 
@@ -26,7 +25,6 @@ import (
 	"github.com/docker/docker/api/types"
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/swarm"
-	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/builder"
 	"github.com/docker/docker/container"
 	"github.com/docker/docker/daemon/config"
@@ -46,7 +44,6 @@ import (
 	"github.com/docker/docker/libnetwork"
 	"github.com/docker/docker/libnetwork/cluster"
 	nwconfig "github.com/docker/docker/libnetwork/config"
-	"github.com/docker/docker/pkg/authorization"
 	"github.com/docker/docker/pkg/fileutils"
 	"github.com/docker/docker/pkg/idtools"
 	"github.com/docker/docker/pkg/plugingetter"
@@ -65,10 +62,10 @@ import (
 	"github.com/sirupsen/logrus"
 	"go.etcd.io/bbolt"
 	"golang.org/x/sync/semaphore"
+	"golang.org/x/sync/singleflight"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials/insecure"
-	"resenje.org/singleflight"
 )
 
 // Daemon holds information about the Docker daemon.
@@ -82,9 +79,9 @@ type Daemon struct {
 	configStore           *config.Config
 	statsCollector        *stats.Collector
 	defaultLogConfig      containertypes.LogConfig
-	registryService       *registry.Service
+	registryService       registry.Service
 	EventsService         *events.Events
-	netController         *libnetwork.Controller
+	netController         libnetwork.NetworkController
 	volumes               *volumesservice.VolumesService
 	root                  string
 	sysInfoOnce           sync.Once
@@ -108,10 +105,7 @@ type Daemon struct {
 	seccompProfile     []byte
 	seccompProfilePath string
 
-	usageContainers singleflight.Group[struct{}, []*types.Container]
-	usageImages     singleflight.Group[struct{}, []*types.ImageSummary]
-	usageVolumes    singleflight.Group[struct{}, []*volume.Volume]
-	usageLayer      singleflight.Group[struct{}, int64]
+	usage singleflight.Group
 
 	pruneRunning int32
 	hosts        map[string]bool // hosts stores the addresses the daemon is listening on
@@ -179,13 +173,6 @@ func (daemon *Daemon) RegistryHosts() docker.RegistryHosts {
 
 	for _, v := range daemon.configStore.InsecureRegistries {
 		u, err := url.Parse(v)
-		if err != nil && !strings.HasPrefix(v, "http://") && !strings.HasPrefix(v, "https://") {
-			originalErr := err
-			u, err = url.Parse("http://" + v)
-			if err != nil {
-				err = originalErr
-			}
-		}
 		c := resolverconfig.RegistryConfig{}
 		if err == nil {
 			v = u.Host
@@ -216,11 +203,6 @@ func (daemon *Daemon) RegistryHosts() docker.RegistryHosts {
 	}
 
 	return resolver.NewRegistryConfig(m)
-}
-
-// layerAccessor may be implemented by ImageService
-type layerAccessor interface {
-	GetLayerByID(cid string) (layer.RWLayer, error)
 }
 
 func (daemon *Daemon) restore() error {
@@ -264,14 +246,12 @@ func (daemon *Daemon) restore() error {
 				log.Debugf("not restoring container because it was created with another storage driver (%s)", c.Driver)
 				return
 			}
-			if accessor, ok := daemon.imageService.(layerAccessor); ok {
-				rwlayer, err := accessor.GetLayerByID(c.ID)
-				if err != nil {
-					log.WithError(err).Error("failed to load container mount")
-					return
-				}
-				c.RWLayer = rwlayer
+			rwlayer, err := daemon.imageService.GetLayerByID(c.ID)
+			if err != nil {
+				log.WithError(err).Error("failed to load container mount")
+				return
 			}
+			c.RWLayer = rwlayer
 			log.WithFields(logrus.Fields{
 				"running": c.IsRunning(),
 				"paused":  c.IsPaused(),
@@ -663,7 +643,7 @@ func (daemon *Daemon) parents(c *container.Container) map[string]*container.Cont
 func (daemon *Daemon) registerLink(parent, child *container.Container, alias string) error {
 	fullName := path.Join(parent.Name, alias)
 	if err := daemon.containersReplica.ReserveName(fullName, child.ID); err != nil {
-		if errors.Is(err, container.ErrNameReserved) {
+		if err == container.ErrNameReserved {
 			logrus.Warnf("error registering link for %s, to %s, as alias %s, ignoring: %v", parent.ID, child.ID, alias, err)
 			return nil
 		}
@@ -729,7 +709,7 @@ func (daemon *Daemon) IsSwarmCompatible() error {
 
 // NewDaemon sets up everything for the daemon to be able to service
 // requests from the webserver.
-func NewDaemon(ctx context.Context, config *config.Config, pluginStore *plugin.Store, authzMiddleware *authorization.Middleware) (daemon *Daemon, err error) {
+func NewDaemon(ctx context.Context, config *config.Config, pluginStore *plugin.Store) (daemon *Daemon, err error) {
 	// Verify platform-specific requirements.
 	// TODO(thaJeztah): this should be called before we try to create the daemon; perhaps together with the config validation.
 	if err := checkSystem(); err != nil {
@@ -916,17 +896,15 @@ func NewDaemon(ctx context.Context, config *config.Config, pluginStore *plugin.S
 			}
 		}
 
-		var (
-			shim     string
-			shimOpts interface{}
-		)
+		var rt types.Runtime
 		if runtime.GOOS != "windows" {
-			shim, shimOpts, err = d.getRuntime(config.GetDefaultRuntimeName())
+			rtPtr, err := d.getRuntime(config.GetDefaultRuntimeName())
 			if err != nil {
 				return nil, err
 			}
+			rt = *rtPtr
 		}
-		return pluginexec.New(ctx, getPluginExecRoot(config), pluginCli, config.ContainerdPluginNamespace, m, shim, shimOpts)
+		return pluginexec.New(ctx, getPluginExecRoot(config), pluginCli, config.ContainerdPluginNamespace, m, rt)
 	}
 
 	// Plugin system initialization should happen before restore. Do not change order.
@@ -938,7 +916,7 @@ func NewDaemon(ctx context.Context, config *config.Config, pluginStore *plugin.S
 		RegistryService:    registryService,
 		LiveRestoreEnabled: config.LiveRestoreEnabled,
 		LogPluginEvent:     d.LogPluginEvent, // todo: make private
-		AuthzMiddleware:    authzMiddleware,
+		AuthzMiddleware:    config.AuthzMiddleware,
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "couldn't create plugin manager")
@@ -953,6 +931,14 @@ func NewDaemon(ctx context.Context, config *config.Config, pluginStore *plugin.S
 		return nil, err
 	}
 
+	// Try to preserve the daemon ID (which is the trust-key's ID) when upgrading
+	// an existing installation; this is a "best-effort".
+	idPath := filepath.Join(config.Root, "engine-id")
+	err = migrateTrustKeyID(config.TrustKeyPath, idPath)
+	if err != nil {
+		logrus.WithError(err).Warnf("unable to migrate engine ID; a new engine ID will be generated")
+	}
+
 	// Check if Devices cgroup is mounted, it is hard requirement for container security,
 	// on Linux.
 	//
@@ -965,7 +951,7 @@ func NewDaemon(ctx context.Context, config *config.Config, pluginStore *plugin.S
 		return nil, errors.New("Devices cgroup isn't mounted")
 	}
 
-	d.id, err = loadOrCreateID(filepath.Join(config.Root, "engine-id"))
+	d.id, err = loadOrCreateID(idPath)
 	if err != nil {
 		return nil, err
 	}
@@ -1012,7 +998,7 @@ func NewDaemon(ctx context.Context, config *config.Config, pluginStore *plugin.S
 		if err := configureKernelSecuritySupport(config, driverName); err != nil {
 			return nil, err
 		}
-		d.imageService = ctrd.NewService(d.containerdCli, d.containers, driverName, d, d.registryService)
+		d.imageService = ctrd.NewService(d.containerdCli, driverName)
 	} else {
 		layerStore, err := layer.NewStoreFromOptions(layer.StoreOptions{
 			Root:                      config.Root,
@@ -1079,6 +1065,19 @@ func NewDaemon(ctx context.Context, config *config.Config, pluginStore *plugin.S
 			RegistryService:           registryService,
 			ContentNamespace:          config.ContainerdNamespace,
 		}
+
+		// // This is a temporary environment variables used in CI to allow pushing
+		// // manifest v2 schema 1 images to test-registries used for testing *pulling*
+		// // these images.
+		// if os.Getenv("DOCKER_ALLOW_SCHEMA1_PUSH_DONOTUSE") != "" {
+		// 	imgSvcConfig.TrustKey, err = loadOrCreateTrustKey(config.TrustKeyPath)
+		// 	if err != nil {
+		// 		return nil, err
+		// 	}
+		// 	if err = os.Mkdir(filepath.Join(config.Root, "trust"), 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		// 		return nil, err
+		// 	}
+		// }
 
 		// containerd is not currently supported with Windows.
 		// So sometimes d.containerdCli will be nil
@@ -1269,13 +1268,42 @@ func (daemon *Daemon) Shutdown(ctx context.Context) error {
 }
 
 // Mount sets container.BaseFS
+// (is it not set coming in? why is it unset?)
 func (daemon *Daemon) Mount(container *container.Container) error {
-	return daemon.imageService.Mount(context.Background(), container)
+	if container.RWLayer == nil {
+		return errors.New("RWLayer of container " + container.ID + " is unexpectedly nil")
+	}
+	dir, err := container.RWLayer.Mount(container.GetMountLabel())
+	if err != nil {
+		return err
+	}
+	logrus.WithField("container", container.ID).Debugf("container mounted via layerStore: %v", dir)
+
+	if container.BaseFS != "" && container.BaseFS != dir {
+		// The mount path reported by the graph driver should always be trusted on Windows, since the
+		// volume path for a given mounted layer may change over time.  This should only be an error
+		// on non-Windows operating systems.
+		if runtime.GOOS != "windows" {
+			daemon.Unmount(container)
+			return fmt.Errorf("driver %s is returning inconsistent paths for container %s ('%s' then '%s')",
+				container.Driver, container.ID, container.BaseFS, dir)
+		}
+	}
+	container.BaseFS = dir // TODO: combine these fields
+	return nil
 }
 
 // Unmount unsets the container base filesystem
 func (daemon *Daemon) Unmount(container *container.Container) error {
-	return daemon.imageService.Unmount(context.Background(), container)
+	if container.RWLayer == nil {
+		return errors.New("RWLayer of container " + container.ID + " is unexpectedly nil")
+	}
+	if err := container.RWLayer.Unmount(); err != nil {
+		logrus.WithField("container", container.ID).WithError(err).Error("error unmounting container")
+		return err
+	}
+
+	return nil
 }
 
 // Subnets return the IPv4 and IPv6 subnets of networks that are manager by Docker.
@@ -1457,11 +1485,6 @@ func (daemon *Daemon) IdentityMapping() idtools.IdentityMapping {
 // ImageService returns the Daemon's ImageService
 func (daemon *Daemon) ImageService() ImageService {
 	return daemon.imageService
-}
-
-// RegistryService returns the Daemon's RegistryService
-func (daemon *Daemon) RegistryService() *registry.Service {
-	return daemon.registryService
 }
 
 // BuilderBackend returns the backend used by builder

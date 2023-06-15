@@ -1104,7 +1104,6 @@ func (e *doubleFastEncoderDict) Reset(d *dict, singleBlock bool) {
 
 	if allDirty || dirtyShardCnt > dLongTableShardCnt/2 {
 		copy(e.longTable[:], e.dictLongTable)
-		// e.longTable = *(*[dFastLongTableSize]tableEntry)(e.dictLongTable)
 		for i := range e.longTableShardDirty {
 			e.longTableShardDirty[i] = false
 		}
@@ -1116,8 +1115,6 @@ func (e *doubleFastEncoderDict) Reset(d *dict, singleBlock bool) {
 		}
 
 		copy(e.longTable[i*dLongTableShardSize:(i+1)*dLongTableShardSize], e.dictLongTable[i*dLongTableShardSize:(i+1)*dLongTableShardSize])
-		// *(*[dLongTableShardSize]tableEntry)(e.longTable[i*dLongTableShardSize:]) = *(*[dLongTableShardSize]tableEntry)(e.dictLongTable[i*dLongTableShardSize:])
-
 		e.longTableShardDirty[i] = false
 	}
 }

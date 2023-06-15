@@ -1,3 +1,6 @@
+//go:build linux
+// +build linux
+
 package overlay
 
 import (
@@ -5,12 +8,12 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/Sirupsen/logrus"
-	"github.com/docker/libnetwork/datastore"
-	"github.com/docker/libnetwork/driverapi"
-	"github.com/docker/libnetwork/netutils"
-	"github.com/docker/libnetwork/ns"
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/datastore"
+	"github.com/docker/docker/libnetwork/driverapi"
+	"github.com/docker/docker/libnetwork/netutils"
+	"github.com/docker/docker/libnetwork/ns"
+	"github.com/docker/docker/libnetwork/types"
+	"github.com/sirupsen/logrus"
 )
 
 type endpointTable map[string]*endpoint
@@ -90,7 +93,7 @@ func (d *driver) CreateEndpoint(nid, eid string, ifInfo driverapi.InterfaceInfo,
 	n.addEndpoint(ep)
 
 	if err := d.writeEndpointToStore(ep); err != nil {
-		return fmt.Errorf("failed to update overlay endpoint %s to local store: %v", ep.id[0:7], err)
+		return fmt.Errorf("failed to update overlay endpoint %.7s to local store: %v", ep.id, err)
 	}
 
 	return nil
@@ -116,7 +119,7 @@ func (d *driver) DeleteEndpoint(nid, eid string) error {
 	n.deleteEndpoint(eid)
 
 	if err := d.deleteEndpointFromStore(ep); err != nil {
-		logrus.Warnf("Failed to delete overlay endpoint %s from local store: %v", ep.id[0:7], err)
+		logrus.Warnf("Failed to delete overlay endpoint %.7s from local store: %v", ep.id, err)
 	}
 
 	if ep.ifName == "" {
@@ -136,7 +139,7 @@ func (d *driver) DeleteEndpoint(nid, eid string) error {
 }
 
 func (d *driver) EndpointOperInfo(nid, eid string) (map[string]interface{}, error) {
-	return make(map[string]interface{}, 0), nil
+	return make(map[string]interface{}), nil
 }
 
 func (d *driver) deleteEndpointFromStore(e *endpoint) error {

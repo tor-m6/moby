@@ -8,13 +8,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/docker/docker/libnetwork/discoverapi"
+	"github.com/docker/docker/libnetwork/types"
 	"github.com/docker/libkv"
 	"github.com/docker/libkv/store"
-	"github.com/docker/libnetwork/discoverapi"
-	"github.com/docker/libnetwork/types"
 )
 
-//DataStore exported
+// DataStore exported
 type DataStore interface {
 	// GetObject gets data from datastore and unmarshals to the specified object
 	GetObject(key string, o KVObject) error
@@ -114,7 +114,7 @@ type ScopeClientCfg struct {
 const (
 	// LocalScope indicates to store the KV object in local datastore such as boltdb
 	LocalScope = "local"
-	// GlobalScope indicates to store the KV object in global datastore such as consul/etcd/zookeeper
+	// GlobalScope indicates to store the KV object in global datastore
 	GlobalScope = "global"
 	// SwarmScope is not indicating a datastore location. It is defined here
 	// along with the other two scopes just for consistency.
@@ -174,18 +174,18 @@ func (cfg *ScopeCfg) IsValid() bool {
 	return true
 }
 
-//Key provides convenient method to create a Key
+// Key provides convenient method to create a Key
 func Key(key ...string) string {
 	keychain := append(rootChain, key...)
 	str := strings.Join(keychain, "/")
 	return str + "/"
 }
 
-//ParseKey provides convenient method to unpack the key to complement the Key function
+// ParseKey provides convenient method to unpack the key to complement the Key function
 func ParseKey(key string) ([]string, error) {
 	chain := strings.Split(strings.Trim(key, "/"), "/")
 
-	// The key must atleast be equal to the rootChain in order to be considered as valid
+	// The key must at least be equal to the rootChain in order to be considered as valid
 	if len(chain) <= len(rootChain) || !reflect.DeepEqual(chain[0:len(rootChain)], rootChain) {
 		return nil, types.BadRequestErrorf("invalid Key : %s", key)
 	}
@@ -589,7 +589,7 @@ func (ds *datastore) DeleteObject(kvObject KVObject) error {
 		defer ds.Unlock()
 	}
 
-	// cleaup the cache first
+	// cleanup the cache first
 	if ds.cache != nil {
 		// If persistent store is skipped, sequencing needs to
 		// happen in cache.
@@ -645,7 +645,7 @@ func (ds *datastore) DeleteTree(kvObject KVObject) error {
 		defer ds.Unlock()
 	}
 
-	// cleaup the cache first
+	// cleanup the cache first
 	if ds.cache != nil {
 		// If persistent store is skipped, sequencing needs to
 		// happen in cache.

@@ -60,7 +60,7 @@ func (cmsg *Cmsghdr) SetLen(length int) {
 func c_utimes(path *byte, times *[2]Timeval) _C_int
 func utimes(path string, times *[2]Timeval) (err error) {
 	var _p1 *byte
-	_p1, err = BytePtrFromString(path)
+	_p1, err = syscall.BytePtrFromString(path)
 	if err != nil {
 		return
 	}
@@ -815,11 +815,11 @@ func (sa *SockaddrALG) sockaddr() (unsafe.Pointer, _Socklen, error) {
 	sa.raw.Feat = sa.Feature
 	sa.raw.Mask = sa.Mask
 
-	typ, err := ByteSliceFromString(sa.Type)
+	typ, err := syscall.ByteSliceFromString(sa.Type)
 	if err != nil {
 		return nil, 0, err
 	}
-	name, err := ByteSliceFromString(sa.Name)
+	name, err := syscall.ByteSliceFromString(sa.Name)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1275,7 +1275,7 @@ func Fchmodat(dirfd int, path string, mode uint32, flags int) (err error) {
 func c_lstat(path *byte, stat *Stat_t) _C_int
 func Lstat(path string, stat *Stat_t) (err error) {
 	var _p1 *byte
-	_p1, err = BytePtrFromString(path)
+	_p1, err = syscall.BytePtrFromString(path)
 	if err != nil {
 		return
 	}
@@ -1299,7 +1299,7 @@ func Lstat(path string, stat *Stat_t) (err error) {
 func c_chroot(path *byte) _C_int
 func Chroot(path string) (err error) {
 	var _p1 *byte
-	_p1, err = BytePtrFromString(path)
+	_p1, err = syscall.BytePtrFromString(path)
 	if err != nil {
 		return
 	}
@@ -1323,7 +1323,7 @@ func Chroot(path string) (err error) {
 func c_chdir(path *byte) _C_int
 func Chdir(path string) (err error) {
 	var _p1 *byte
-	_p1, err = BytePtrFromString(path)
+	_p1, err = syscall.BytePtrFromString(path)
 	if err != nil {
 		return
 	}
@@ -1346,7 +1346,7 @@ func Chdir(path string) (err error) {
 func c_unlink(path *byte) _C_int
 func Unlink(path string) (err error) {
 	var _p1 *byte
-	_p1, err = BytePtrFromString(path)
+	_p1, err = syscall.BytePtrFromString(path)
 	if err != nil {
 		return
 	}
@@ -1451,7 +1451,7 @@ func Flock(fd int, how int) (err error) {
 func c_unmount(dir *byte, flags _C_long) _C_int
 func Unmount(dir string, flags int) (err error) {
 	var _p1 *byte
-	_p1, err = BytePtrFromString(dir)
+	_p1, err = syscall.BytePtrFromString(dir)
 	if err != nil {
 		return
 	}

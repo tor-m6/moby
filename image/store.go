@@ -67,29 +67,22 @@ func NewImageStore(fs StoreBackend, lss LayerGetReleaser) (Store, error) {
 }
 
 func (is *store) restore() error {
-	// As the code below is run when restoring all images (which can be "many"),
-	// constructing the "logrus.WithFields" is deliberately not "DRY", as the
-	// logger is only used for error-cases, and we don't want to do allocations
-	// if we don't need it. The "f" type alias is here is just for convenience,
-	// and to make the code _slightly_ more DRY. See the discussion on GitHub;
-	// https://github.com/moby/moby/pull/44426#discussion_r1059519071
-	type f = logrus.Fields
 	err := is.fs.Walk(func(dgst digest.Digest) error {
-		img, err := is.Get(ID(dgst))
+		img, err := is.Get(IDFromDigest(dgst))
 		if err != nil {
-			logrus.WithFields(f{"digest": dgst, "err": err}).Error("invalid image")
+			logrus.Errorf("invalid image %v, %v", dgst, err)
 			return nil
 		}
 		var l layer.Layer
 		if chainID := img.RootFS.ChainID(); chainID != "" {
 			if !system.IsOSSupported(img.OperatingSystem()) {
-				logrus.WithFields(f{"chainID": chainID, "os": img.OperatingSystem()}).Error("not restoring image with unsupported operating system")
+				logrus.Errorf("not restoring image with unsupported operating system %v, %v, %s", dgst, chainID, img.OperatingSystem())
 				return nil
 			}
 			l, err = is.lss.Get(chainID)
 			if err != nil {
-				if errors.Is(err, layer.ErrLayerDoesNotExist) {
-					logrus.WithFields(f{"chainID": chainID, "os": img.OperatingSystem(), "err": err}).Error("not restoring image")
+				if err == layer.ErrLayerDoesNotExist {
+					logrus.Errorf("layer does not exist, not restoring image %v, %v, %s", dgst, chainID, img.OperatingSystem())
 					return nil
 				}
 				return err
@@ -99,10 +92,12 @@ func (is *store) restore() error {
 			return err
 		}
 
-		is.images[ID(dgst)] = &imageMeta{
+		imageMeta := &imageMeta{
 			layer:    l,
 			children: make(map[ID]struct{}),
 		}
+
+		is.images[IDFromDigest(dgst)] = imageMeta
 
 		return nil
 	})
@@ -146,15 +141,15 @@ func (is *store) Create(config []byte) (ID, error) {
 		return "", errdefs.InvalidParameter(errors.New("too many non-empty layers in History section"))
 	}
 
-	imageDigest, err := is.fs.Set(config)
+	dgst, err := is.fs.Set(config)
 	if err != nil {
 		return "", errdefs.InvalidParameter(err)
 	}
+	imageID := IDFromDigest(dgst)
 
 	is.Lock()
 	defer is.Unlock()
 
-	imageID := ID(imageDigest)
 	if _, exists := is.images[imageID]; exists {
 		return imageID, nil
 	}
@@ -172,12 +167,13 @@ func (is *store) Create(config []byte) (ID, error) {
 		}
 	}
 
-	is.images[imageID] = &imageMeta{
+	imageMeta := &imageMeta{
 		layer:    l,
 		children: make(map[ID]struct{}),
 	}
 
-	if err = is.digestSet.Add(imageDigest); err != nil {
+	is.images[imageID] = imageMeta
+	if err := is.digestSet.Add(imageID.Digest()); err != nil {
 		delete(is.images, imageID)
 		return "", errdefs.InvalidParameter(err)
 	}
@@ -201,7 +197,7 @@ func (is *store) Search(term string) (ID, error) {
 		}
 		return "", errors.WithStack(err)
 	}
-	return ID(dgst), nil
+	return IDFromDigest(dgst), nil
 }
 
 func (is *store) Get(id ID) (*Image, error) {
@@ -230,16 +226,16 @@ func (is *store) Delete(id ID) ([]layer.Metadata, error) {
 	is.Lock()
 	defer is.Unlock()
 
-	imgMeta := is.images[id]
-	if imgMeta == nil {
+	imageMeta := is.images[id]
+	if imageMeta == nil {
 		return nil, errdefs.NotFound(fmt.Errorf("unrecognized image ID %s", id.String()))
 	}
 	_, err := is.Get(id)
 	if err != nil {
 		return nil, errdefs.NotFound(fmt.Errorf("unrecognized image %s, %v", id.String(), err))
 	}
-	for cID := range imgMeta.children {
-		is.fs.DeleteMetadata(cID.Digest(), "parent")
+	for id := range imageMeta.children {
+		is.fs.DeleteMetadata(id.Digest(), "parent")
 	}
 	if parent, err := is.GetParent(id); err == nil && is.images[parent] != nil {
 		delete(is.images[parent].children, id)
@@ -251,24 +247,24 @@ func (is *store) Delete(id ID) ([]layer.Metadata, error) {
 	delete(is.images, id)
 	is.fs.Delete(id.Digest())
 
-	if imgMeta.layer != nil {
-		return is.lss.Release(imgMeta.layer)
+	if imageMeta.layer != nil {
+		return is.lss.Release(imageMeta.layer)
 	}
 	return nil, nil
 }
 
-func (is *store) SetParent(id, parentID ID) error {
+func (is *store) SetParent(id, parent ID) error {
 	is.Lock()
 	defer is.Unlock()
-	parentMeta := is.images[parentID]
+	parentMeta := is.images[parent]
 	if parentMeta == nil {
-		return errdefs.NotFound(fmt.Errorf("unknown parent image ID %s", parentID.String()))
+		return errdefs.NotFound(fmt.Errorf("unknown parent image ID %s", parent.String()))
 	}
 	if parent, err := is.GetParent(id); err == nil && is.images[parent] != nil {
 		delete(is.images[parent].children, id)
 	}
 	parentMeta.children[id] = struct{}{}
-	return is.fs.SetMetadata(id.Digest(), "parent", []byte(parentID))
+	return is.fs.SetMetadata(id.Digest(), "parent", []byte(parent))
 }
 
 func (is *store) GetParent(id ID) (ID, error) {

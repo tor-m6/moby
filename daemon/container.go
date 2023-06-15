@@ -48,22 +48,15 @@ func (daemon *Daemon) GetContainer(prefixOrName string) (*container.Container, e
 		return containerByName, nil
 	}
 
-	containerID, err := daemon.containersReplica.GetByPrefix(prefixOrName)
-	if err != nil {
-		return nil, err
+	containerID, indexError := daemon.containersReplica.GetByPrefix(prefixOrName)
+	if indexError != nil {
+		// When truncindex defines an error type, use that instead
+		if indexError == container.ErrNotExist {
+			return nil, containerNotFound(prefixOrName)
+		}
+		return nil, errdefs.System(indexError)
 	}
-	ctr := daemon.containers.Get(containerID)
-	if ctr == nil {
-		// Updates to the daemon.containersReplica ViewDB are not atomic
-		// or consistent w.r.t. the live daemon.containers Store so
-		// while reaching this code path may be indicative of a bug,
-		// it is not _necessarily_ the case.
-		logrus.WithField("prefixOrName", prefixOrName).
-			WithField("id", containerID).
-			Debugf("daemon.GetContainer: container is known to daemon.containersReplica but not daemon.containers")
-		return nil, containerNotFound(prefixOrName)
-	}
-	return ctr, nil
+	return daemon.containers.Get(containerID), nil
 }
 
 // checkContainer make sure the specified container validates the specified conditions
@@ -229,7 +222,7 @@ func (daemon *Daemon) setHostConfig(container *container.Container, hostConfig *
 
 	runconfig.SetDefaultNetModeIfBlank(hostConfig)
 	container.HostConfig = hostConfig
-	return nil
+	return container.CheckpointTo(daemon.containersReplica)
 }
 
 // verifyContainerSettings performs validation of the hostconfig and config
@@ -304,11 +297,6 @@ func validateHostConfig(hostConfig *containertypes.HostConfig) error {
 	}
 	if !hostConfig.Isolation.IsValid() {
 		return errors.Errorf("invalid isolation '%s' on %s", hostConfig.Isolation, runtime.GOOS)
-	}
-	for k := range hostConfig.Annotations {
-		if k == "" {
-			return errors.Errorf("invalid Annotations: the empty string is not permitted as an annotation key")
-		}
 	}
 	return nil
 }

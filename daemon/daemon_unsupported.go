@@ -1,5 +1,5 @@
-//go:build !linux && !freebsd && !windows
-// +build !linux,!freebsd,!windows
+//go:build !linux && !freebsd && !windows && !inno
+// +build !linux,!freebsd,!windows,!inno
 
 package daemon // import "github.com/docker/docker/daemon"
 

@@ -1,12 +1,15 @@
+//go:build linux
+// +build linux
+
 package bridge
 
 import (
 	"fmt"
 	"net"
 
-	"github.com/Sirupsen/logrus"
-	// "github.com/docker/libnetwork/iptables"
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/iptables"
+	"github.com/docker/docker/libnetwork/types"
+	"github.com/sirupsen/logrus"
 )
 
 type link struct {
@@ -27,7 +30,6 @@ func newLink(parentIP, childIP string, ports []types.TransportPort, bridge strin
 		ports:    ports,
 		bridge:   bridge,
 	}
-
 }
 
 func (l *link) Enable() error {

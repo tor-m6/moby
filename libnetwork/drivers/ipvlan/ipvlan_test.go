@@ -1,11 +1,13 @@
+//go:build linux
+// +build linux
+
 package ipvlan
 
 import (
 	"testing"
 
+	"github.com/docker/docker/libnetwork/driverapi"
 	"github.com/docker/docker/pkg/plugingetter"
-	"github.com/docker/libnetwork/driverapi"
-	_ "github.com/docker/libnetwork/testutils"
 )
 
 const testNetworkType = "ipvlan"

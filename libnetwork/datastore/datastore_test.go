@@ -5,9 +5,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/docker/libnetwork/options"
-	_ "github.com/docker/libnetwork/testutils"
-	"github.com/stretchr/testify/assert"
+	"github.com/docker/docker/libnetwork/options"
+	"gotest.tools/v3/assert"
 )
 
 var dummyKey = "dummy"
@@ -68,12 +67,12 @@ func TestKVObjectFlatKey(t *testing.T) {
 func TestAtomicKVObjectFlatKey(t *testing.T) {
 	store := NewTestDataStore()
 	expected := dummyKVObject("1111", true)
-	assert.False(t, expected.Exists())
+	assert.Check(t, !expected.Exists())
 	err := store.PutObjectAtomic(expected)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assert.True(t, expected.Exists())
+	assert.Check(t, expected.Exists())
 
 	// PutObjectAtomic automatically sets the Index again. Hence the following must pass.
 
@@ -104,12 +103,11 @@ func TestAtomicKVObjectFlatKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assert.True(t, newObj.Exists())
+	assert.Check(t, newObj.Exists())
 	err = store.PutObjectAtomic(&n)
 	if err != nil {
 		t.Fatal(err)
 	}
-
 }
 
 // dummy data used to test the datastore

@@ -1,3 +1,4 @@
+//go:build !linux && !windows
 // +build !linux,!windows
 
 package libnetwork
@@ -18,7 +19,7 @@ func (c *controller) rmServiceBinding(svcName, svcID, nID, eID, containerName st
 	return fmt.Errorf("not supported")
 }
 
-func (sb *sandbox) populateLoadbalancers(ep *endpoint) {
+func (sb *sandbox) populateLoadBalancers(ep *endpoint) {
 }
 
 func arrangeIngressFilterRule() {

@@ -391,7 +391,6 @@ func (s *session) sendTaskStatus(ctx context.Context, taskID string, taskStatus 
 	return nil
 }
 
-//nolint:unused // TODO(thaJeztah) this is currently unused: is it safe to remove?
 func (s *session) sendTaskStatuses(ctx context.Context, updates ...*api.UpdateTaskStatusRequest_TaskStatusUpdate) ([]*api.UpdateTaskStatusRequest_TaskStatusUpdate, error) {
 	if len(updates) < 1 {
 		return nil, nil

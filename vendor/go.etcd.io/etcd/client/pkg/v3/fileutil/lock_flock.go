@@ -20,6 +20,7 @@ package fileutil
 import (
 	"os"
 	"syscall"
+	"golang.org/x/sys/unix"
 )
 
 func flockTryLockFile(path string, flag int, perm os.FileMode) (*LockedFile, error) {
@@ -27,7 +28,7 @@ func flockTryLockFile(path string, flag int, perm os.FileMode) (*LockedFile, err
 	if err != nil {
 		return nil, err
 	}
-	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err = unix.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		f.Close()
 		if err == syscall.EWOULDBLOCK {
 			err = ErrLocked
@@ -42,7 +43,7 @@ func flockLockFile(path string, flag int, perm os.FileMode) (*LockedFile, error)
 	if err != nil {
 		return nil, err
 	}
-	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+	if err = unix.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
 		f.Close()
 		return nil, err
 	}

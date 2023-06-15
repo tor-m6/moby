@@ -76,10 +76,11 @@ func TestDaemonRestartKillContainers(t *testing.T) {
 					d.Stop(t)
 				},
 			} {
-				tc := tc
-				liveRestoreEnabled := liveRestoreEnabled
-				stopDaemon := stopDaemon
 				t.Run(fmt.Sprintf("live-restore=%v/%s/%s", liveRestoreEnabled, tc.desc, fnName), func(t *testing.T) {
+					c := tc
+					liveRestoreEnabled := liveRestoreEnabled
+					stopDaemon := stopDaemon
+
 					t.Parallel()
 
 					d := daemon.New(t)
@@ -94,11 +95,11 @@ func TestDaemonRestartKillContainers(t *testing.T) {
 					defer d.Stop(t)
 					ctx := context.Background()
 
-					resp, err := client.ContainerCreate(ctx, tc.config, tc.hostConfig, nil, nil, "")
+					resp, err := client.ContainerCreate(ctx, c.config, c.hostConfig, nil, nil, "")
 					assert.NilError(t, err)
 					defer client.ContainerRemove(ctx, resp.ID, types.ContainerRemoveOptions{Force: true})
 
-					if tc.xStart {
+					if c.xStart {
 						err = client.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{})
 						assert.NilError(t, err)
 					}
@@ -106,9 +107,9 @@ func TestDaemonRestartKillContainers(t *testing.T) {
 					stopDaemon(t, d)
 					d.Start(t, args...)
 
-					expected := tc.xRunning
+					expected := c.xRunning
 					if liveRestoreEnabled {
-						expected = tc.xRunningLiveRestore
+						expected = c.xRunningLiveRestore
 					}
 
 					var running bool
@@ -124,7 +125,7 @@ func TestDaemonRestartKillContainers(t *testing.T) {
 					}
 					assert.Equal(t, expected, running, "got unexpected running state, expected %v, got: %v", expected, running)
 
-					if tc.xHealthCheck {
+					if c.xHealthCheck {
 						startTime := time.Now()
 						ctxPoll, cancel := context.WithTimeout(ctx, 30*time.Second)
 						defer cancel()

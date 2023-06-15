@@ -139,11 +139,10 @@ func getxattr(path, attr string) ([]byte, error) {
 
 func setxattr(path, key, value string) error {
 	// Do not set trusted attributes
-	// if strings.HasPrefix(key, "trusted.") {
-	// 	return fmt.Errorf("admin attributes from archive not supported: %w", unix.ENOTSUP)
-	// }
-	// return unix.Lsetxattr(path, key, []byte(value), 0)
-	return nil
+	if strings.HasPrefix(key, "trusted.") {
+		return fmt.Errorf("admin attributes from archive not supported: %w", unix.ENOTSUP)
+	}
+	return unix.Lsetxattr(path, key, []byte(value), 0)
 }
 
 func copyDirInfo(fi os.FileInfo, path string) error {

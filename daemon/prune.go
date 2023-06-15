@@ -73,12 +73,9 @@ func (daemon *Daemon) ContainersPrune(ctx context.Context, pruneFilters filters.
 			if !matchLabels(pruneFilters, c.Config.Labels) {
 				continue
 			}
-			cSize, _, err := daemon.imageService.GetContainerLayerSize(ctx, c.ID)
-			if err != nil {
-				return nil, err
-			}
+			cSize, _ := daemon.imageService.GetContainerLayerSize(c.ID)
 			// TODO: sets RmLink to true?
-			err = daemon.ContainerRm(c.ID, &types.ContainerRmConfig{})
+			err := daemon.ContainerRm(c.ID, &types.ContainerRmConfig{})
 			if err != nil {
 				logrus.Warnf("failed to prune container %s: %v", c.ID, err)
 				continue

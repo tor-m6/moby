@@ -5,13 +5,8 @@ import (
 	"fmt"
 	"net"
 	"sync"
-)
 
-const (
-	// DefaultPortRangeStart indicates the first port in port range
-	DefaultPortRangeStart = 49153
-	// DefaultPortRangeEnd indicates the last port in port range
-	DefaultPortRangeEnd = 65535
+	"github.com/sirupsen/logrus"
 )
 
 type ipMapping map[string]protoMap
@@ -24,7 +19,6 @@ var (
 	defaultIP          = net.ParseIP("0.0.0.0")
 	once               sync.Once
 	instance           *PortAllocator
-	createInstance     = func() { instance = newInstance() }
 )
 
 // ErrPortAlreadyAllocated is the returned error information when a requested port is already being used
@@ -88,14 +82,17 @@ func Get() *PortAllocator {
 	// the OS so that it can have up to date view of the OS port allocation.
 	// When this happens singleton behavior will be removed. Clients do not
 	// need to worry about this, they will not see a change in behavior.
-	once.Do(createInstance)
+	once.Do(func() {
+		instance = newInstance()
+	})
 	return instance
 }
 
 func newInstance() *PortAllocator {
 	start, end, err := getDynamicPortRange()
 	if err != nil {
-		start, end = DefaultPortRangeStart, DefaultPortRangeEnd
+		logrus.WithError(err).Infof("falling back to default port range %d-%d", defaultPortRangeStart, defaultPortRangeEnd)
+		start, end = defaultPortRangeStart, defaultPortRangeEnd
 	}
 	return &PortAllocator{
 		ipMap: ipMapping{},
@@ -120,7 +117,7 @@ func (p *PortAllocator) RequestPortInRange(ip net.IP, proto string, portStart, p
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 
-	if proto != "tcp" && proto != "udp" {
+	if proto != "tcp" && proto != "udp" && proto != "sctp" {
 		return 0, ErrUnknownProtocol
 	}
 
@@ -131,8 +128,9 @@ func (p *PortAllocator) RequestPortInRange(ip net.IP, proto string, portStart, p
 	protomap, ok := p.ipMap[ipstr]
 	if !ok {
 		protomap = protoMap{
-			"tcp": p.newPortMap(),
-			"udp": p.newPortMap(),
+			"tcp":  p.newPortMap(),
+			"udp":  p.newPortMap(),
+			"sctp": p.newPortMap(),
 		}
 
 		p.ipMap[ipstr] = protomap

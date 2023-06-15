@@ -1,18 +1,20 @@
+//go:build linux
+// +build linux
+
 package bridge
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 
-	"github.com/Sirupsen/logrus"
-	"github.com/docker/docker/pkg/parsers/kernel"
-	"github.com/docker/libnetwork/netutils"
+	"github.com/docker/docker/libnetwork/netutils"
+	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 )
 
 // SetupDevice create a new bridge interface/
 func setupDevice(config *networkConfiguration, i *bridgeInterface) error {
-	var setMac bool
-
 	// We only attempt to create the bridge when the requested device name is
 	// the default one.
 	if config.BridgeName != DefaultBridgeName && config.DefaultBridge {
@@ -26,28 +28,33 @@ func setupDevice(config *networkConfiguration, i *bridgeInterface) error {
 		},
 	}
 
-	// Only set the bridge's MAC address if the kernel version is > 3.3, as it
-	// was not supported before that.
-	kv, err := kernel.GetKernelVersion()
-	if err != nil {
-		logrus.Errorf("Failed to check kernel versions: %v. Will not assign a MAC address to the bridge interface", err)
-	} else {
-		setMac = kv.Kernel > 3 || (kv.Kernel == 3 && kv.Major >= 3)
+	// Set the bridge's MAC address. Requires kernel version 3.3 or up.
+	hwAddr := netutils.GenerateRandomMAC()
+	i.Link.Attrs().HardwareAddr = hwAddr
+	logrus.Debugf("Setting bridge mac address to %s", hwAddr)
+
+	if err := i.nlh.LinkAdd(i.Link); err != nil {
+		logrus.WithError(err).Errorf("Failed to create bridge %s via netlink", config.BridgeName)
+		return err
 	}
 
-	if err = i.nlh.LinkAdd(i.Link); err != nil {
-		logrus.Debugf("Failed to create bridge %s via netlink. Trying ioctl", config.BridgeName)
-		return ioctlCreateBridge(config.BridgeName, setMac)
-	}
+	return nil
+}
 
-	if setMac {
-		hwAddr := netutils.GenerateRandomMAC()
-		if err = i.nlh.LinkSetHardwareAddr(i.Link, hwAddr); err != nil {
-			return fmt.Errorf("failed to set bridge mac-address %s : %s", hwAddr, err.Error())
-		}
-		logrus.Debugf("Setting bridge mac address to %s", hwAddr)
+func setupDefaultSysctl(config *networkConfiguration, i *bridgeInterface) error {
+	// Disable IPv6 router advertisements originating on the bridge
+	sysPath := filepath.Join("/proc/sys/net/ipv6/conf/", config.BridgeName, "accept_ra")
+	if _, err := os.Stat(sysPath); err != nil {
+		logrus.
+			WithField("bridge", config.BridgeName).
+			WithField("syspath", sysPath).
+			Info("failed to read ipv6 net.ipv6.conf.<bridge>.accept_ra")
+		return nil
 	}
-	return err
+	if err := os.WriteFile(sysPath, []byte{'0', '\n'}, 0644); err != nil {
+		logrus.WithError(err).Warn("unable to disable IPv6 router advertisement")
+	}
+	return nil
 }
 
 // SetupDeviceUp ups the given bridge interface.

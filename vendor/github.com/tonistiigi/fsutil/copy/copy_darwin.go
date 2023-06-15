@@ -1,4 +1,3 @@
-//go:build darwin
 // +build darwin
 
 package fs
@@ -40,8 +39,4 @@ func copyFileContent(dst, src *os.File) error {
 	bufferPool.Put(buf)
 
 	return err
-}
-
-func mknod(dst string, mode uint32, rDev int) error {
-	return unix.Mknod(dst, uint32(mode), rDev)
 }

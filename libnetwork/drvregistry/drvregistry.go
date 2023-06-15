@@ -6,10 +6,10 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/docker/docker/libnetwork/driverapi"
+	"github.com/docker/docker/libnetwork/ipamapi"
+	"github.com/docker/docker/libnetwork/types"
 	"github.com/docker/docker/pkg/plugingetter"
-	"github.com/docker/libnetwork/driverapi"
-	"github.com/docker/libnetwork/ipamapi"
-	"github.com/docker/libnetwork/types"
 )
 
 type driverData struct {
@@ -54,7 +54,7 @@ type IPAMNotifyFunc func(name string, driver ipamapi.Ipam, cap *ipamapi.Capabili
 // DriverNotifyFunc defines the notify function signature when a new network driver gets registered.
 type DriverNotifyFunc func(name string, driver driverapi.Driver, capability driverapi.Capability) error
 
-// New retruns a new driver registry handle.
+// New returns a new driver registry handle.
 func New(lDs, gDs interface{}, dfn DriverNotifyFunc, ifn IPAMNotifyFunc, pg plugingetter.PluginGetter) (*DrvRegistry, error) {
 	r := &DrvRegistry{
 		drivers:      make(driverTable),

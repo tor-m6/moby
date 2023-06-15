@@ -9,6 +9,8 @@ package unix
 const (
 	SizeofPtr  = 0x8
 	SizeofLong = 0x8
+	sizeofPtr  = SizeofPtr
+	sizeofLong = SizeofLong
 )
 
 type (
@@ -1391,6 +1393,10 @@ const (
 	SizeofTCPRepairOpt      = 0x8
 	SizeofNlMsghdr     = 0x10
 	SizeofNlMsgerr     = 0x14
+	SizeofIfInfomsg     = 0x10
+	SizeofIfAddrmsg     = 0x8
+	SizeofRtAttr       = 0x4
+	SizeofRtMsg         = 0xc
 )
 
 type MountAttr struct {
@@ -1415,3 +1421,31 @@ type _gid_t uint32
 type Pid_t _pid_t
 type Uid_t _uid_t
 type Gid_t _gid_t
+
+type NlAttr struct {
+	Len  uint16
+	Type uint16
+}
+
+type RtAttr struct {
+	Len  uint16
+	Type uint16
+}
+
+type IfInfomsg struct {
+	Family     uint8
+	X__ifi_pad uint8
+	Type       uint16
+	Index      int32
+	Flags      uint32
+	Change     uint32
+}
+
+type IfAddrmsg struct {
+	Family    uint8
+	Prefixlen uint8
+	Flags     uint8
+	Scope     uint8
+	Index     uint32
+}
+

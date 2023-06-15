@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	cdcgroups "github.com/containerd/cgroups/v3"
+	cdcgroups "github.com/containerd/cgroups"
 	"github.com/containerd/containerd/containers"
 	coci "github.com/containerd/containerd/oci"
 	"github.com/containerd/containerd/pkg/apparmor"
@@ -22,8 +22,8 @@ import (
 	"github.com/docker/docker/oci"
 	"github.com/docker/docker/oci/caps"
 	"github.com/docker/docker/pkg/idtools"
-	"github.com/docker/docker/pkg/rootless/specconv"
 	"github.com/docker/docker/pkg/stringid"
+	"github.com/docker/docker/rootless/specconv"
 	volumemounts "github.com/docker/docker/volume/mounts"
 	"github.com/moby/sys/mount"
 	"github.com/moby/sys/mountinfo"
@@ -241,7 +241,8 @@ func WithNamespaces(daemon *Daemon, c *container.Container) coci.SpecOpts {
 		// network
 		if !c.Config.NetworkDisabled {
 			ns := specs.LinuxNamespace{Type: "network"}
-			if c.HostConfig.NetworkMode.IsContainer() {
+			parts := strings.SplitN(string(c.HostConfig.NetworkMode), ":", 2)
+			if parts[0] == "container" {
 				nc, err := daemon.getNetworkedContainer(c.ID, c.HostConfig.NetworkMode.ConnectedContainer())
 				if err != nil {
 					return err
@@ -731,9 +732,9 @@ func WithCommonOptions(daemon *Daemon, c *container.Container) coci.SpecOpts {
 				Path:     c.BaseFS,
 				Readonly: c.HostConfig.ReadonlyRootfs,
 			}
-			if err := c.SetupWorkingDirectory(daemon.idMapping.RootPair()); err != nil {
-				return err
-			}
+		}
+		if err := c.SetupWorkingDirectory(daemon.idMapping.RootPair()); err != nil {
+			return err
 		}
 		cwd := c.Config.WorkingDir
 		if len(cwd) == 0 {
@@ -1017,6 +1018,7 @@ func (daemon *Daemon) createSpec(ctx context.Context, c *container.Container) (r
 		WithResources(c),
 		WithSysctls(c),
 		WithDevices(daemon, c),
+		WithUser(c),
 		WithRlimits(daemon, c),
 		WithNamespaces(daemon, c),
 		WithCapabilities(c),
@@ -1026,22 +1028,7 @@ func (daemon *Daemon) createSpec(ctx context.Context, c *container.Container) (r
 		WithApparmor(c),
 		WithSelinux(c),
 		WithOOMScore(&c.HostConfig.OomScoreAdj),
-		coci.WithAnnotations(c.HostConfig.Annotations),
 	)
-	if daemon.UsesSnapshotter() {
-		s.Root = &specs.Root{
-			Path: "rootfs",
-		}
-		if c.Config.User != "" {
-			opts = append(opts, coci.WithUser(c.Config.User))
-		}
-		if c.Config.WorkingDir != "" {
-			opts = append(opts, coci.WithProcessCwd(c.Config.WorkingDir))
-		}
-	} else {
-		opts = append(opts, WithUser(c))
-	}
-
 	if c.NoNewPrivileges {
 		opts = append(opts, coci.WithNoNewPrivileges)
 	}
@@ -1065,7 +1052,7 @@ func (daemon *Daemon) createSpec(ctx context.Context, c *container.Container) (r
 		snapshotKey = c.ID
 	}
 
-	return &s, coci.ApplyOpts(ctx, daemon.containerdCli, &containers.Container{
+	return &s, coci.ApplyOpts(ctx, nil, &containers.Container{
 		ID:          c.ID,
 		Snapshotter: snapshotter,
 		SnapshotKey: snapshotKey,

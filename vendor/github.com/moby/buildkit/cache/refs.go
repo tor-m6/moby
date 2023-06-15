@@ -1555,7 +1555,7 @@ func newSharableMountPool(tmpdirRoot string) (sharableMountPool, error) {
 			return sharableMountPool{}, fmt.Errorf("failed to prepare mount pool: %w", err)
 		}
 		// If tmpdirRoot is specified, remove existing mounts to avoid conflict.
-		files, err := ioutil.ReadDir(tmpdirRoot)
+		files, err := os.ReadDir(tmpdirRoot)
 		if err != nil {
 			return sharableMountPool{}, fmt.Errorf("failed to read mount pool: %w", err)
 		}

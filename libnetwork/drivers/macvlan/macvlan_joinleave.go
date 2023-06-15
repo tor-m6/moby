@@ -1,14 +1,17 @@
+//go:build linux
+// +build linux
+
 package macvlan
 
 import (
 	"fmt"
 	"net"
 
-	"github.com/Sirupsen/logrus"
-	"github.com/docker/libnetwork/driverapi"
-	"github.com/docker/libnetwork/netutils"
-	"github.com/docker/libnetwork/ns"
-	"github.com/docker/libnetwork/osl"
+	"github.com/docker/docker/libnetwork/driverapi"
+	"github.com/docker/docker/libnetwork/netutils"
+	"github.com/docker/docker/libnetwork/ns"
+	"github.com/docker/docker/libnetwork/osl"
+	"github.com/sirupsen/logrus"
 )
 
 // Join method is invoked when a Sandbox is attached to an endpoint.
@@ -39,38 +42,49 @@ func (d *driver) Join(nid, eid string, sboxKey string, jinfo driverapi.JoinInfo,
 		return fmt.Errorf("could not find endpoint with id %s", eid)
 	}
 	// parse and match the endpoint address with the available v4 subnets
-	if len(n.config.Ipv4Subnets) > 0 {
-		s := n.getSubnetforIPv4(ep.addr)
-		if s == nil {
-			return fmt.Errorf("could not find a valid ipv4 subnet for endpoint %s", eid)
+	if !n.config.Internal {
+		if len(n.config.Ipv4Subnets) > 0 {
+			s := n.getSubnetforIPv4(ep.addr)
+			if s == nil {
+				return fmt.Errorf("could not find a valid ipv4 subnet for endpoint %s", eid)
+			}
+			v4gw, _, err := net.ParseCIDR(s.GwIP)
+			if err != nil {
+				return fmt.Errorf("gateway %s is not a valid ipv4 address: %v", s.GwIP, err)
+			}
+			err = jinfo.SetGateway(v4gw)
+			if err != nil {
+				return err
+			}
+			logrus.Debugf("Macvlan Endpoint Joined with IPv4_Addr: %s, Gateway: %s, MacVlan_Mode: %s, Parent: %s",
+				ep.addr.IP.String(), v4gw.String(), n.config.MacvlanMode, n.config.Parent)
 		}
-		v4gw, _, err := net.ParseCIDR(s.GwIP)
-		if err != nil {
-			return fmt.Errorf("gatway %s is not a valid ipv4 address: %v", s.GwIP, err)
+		// parse and match the endpoint address with the available v6 subnets
+		if len(n.config.Ipv6Subnets) > 0 {
+			s := n.getSubnetforIPv6(ep.addrv6)
+			if s == nil {
+				return fmt.Errorf("could not find a valid ipv6 subnet for endpoint %s", eid)
+			}
+			v6gw, _, err := net.ParseCIDR(s.GwIP)
+			if err != nil {
+				return fmt.Errorf("gateway %s is not a valid ipv6 address: %v", s.GwIP, err)
+			}
+			err = jinfo.SetGatewayIPv6(v6gw)
+			if err != nil {
+				return err
+			}
+			logrus.Debugf("Macvlan Endpoint Joined with IPv6_Addr: %s Gateway: %s MacVlan_Mode: %s, Parent: %s",
+				ep.addrv6.IP.String(), v6gw.String(), n.config.MacvlanMode, n.config.Parent)
 		}
-		err = jinfo.SetGateway(v4gw)
-		if err != nil {
-			return err
+	} else {
+		if len(n.config.Ipv4Subnets) > 0 {
+			logrus.Debugf("Macvlan Endpoint Joined with IPv4_Addr: %s, MacVlan_Mode: %s, Parent: %s",
+				ep.addr.IP.String(), n.config.MacvlanMode, n.config.Parent)
 		}
-		logrus.Debugf("Macvlan Endpoint Joined with IPv4_Addr: %s, Gateway: %s, MacVlan_Mode: %s, Parent: %s",
-			ep.addr.IP.String(), v4gw.String(), n.config.MacvlanMode, n.config.Parent)
-	}
-	// parse and match the endpoint address with the available v6 subnets
-	if len(n.config.Ipv6Subnets) > 0 {
-		s := n.getSubnetforIPv6(ep.addrv6)
-		if s == nil {
-			return fmt.Errorf("could not find a valid ipv6 subnet for endpoint %s", eid)
+		if len(n.config.Ipv6Subnets) > 0 {
+			logrus.Debugf("Macvlan Endpoint Joined with IPv6_Addr: %s MacVlan_Mode: %s, Parent: %s",
+				ep.addrv6.IP.String(), n.config.MacvlanMode, n.config.Parent)
 		}
-		v6gw, _, err := net.ParseCIDR(s.GwIP)
-		if err != nil {
-			return fmt.Errorf("gatway %s is not a valid ipv6 address: %v", s.GwIP, err)
-		}
-		err = jinfo.SetGatewayIPv6(v6gw)
-		if err != nil {
-			return err
-		}
-		logrus.Debugf("Macvlan Endpoint Joined with IPv6_Addr: %s Gateway: %s MacVlan_Mode: %s, Parent: %s",
-			ep.addrv6.IP.String(), v6gw.String(), n.config.MacvlanMode, n.config.Parent)
 	}
 	iNames := jinfo.InterfaceName()
 	err = iNames.SetNames(vethName, containerVethPrefix)
@@ -78,8 +92,9 @@ func (d *driver) Join(nid, eid string, sboxKey string, jinfo driverapi.JoinInfo,
 		return err
 	}
 	if err := d.storeUpdate(ep); err != nil {
-		return fmt.Errorf("failed to save macvlan endpoint %s to store: %v", ep.id[0:7], err)
+		return fmt.Errorf("failed to save macvlan endpoint %.7s to store: %v", ep.id, err)
 	}
+
 	return nil
 }
 
@@ -101,30 +116,18 @@ func (d *driver) Leave(nid, eid string) error {
 	return nil
 }
 
-// getSubnetforIP returns the ipv4 subnet to which the given IP belongs
-func (n *network) getSubnetforIPv4(ip *net.IPNet) *ipv4Subnet {
-	for _, s := range n.config.Ipv4Subnets {
-		_, snet, err := net.ParseCIDR(s.SubnetIP)
-		if err != nil {
-			return nil
-		}
-		// first check if the mask lengths are the same
-		i, _ := snet.Mask.Size()
-		j, _ := ip.Mask.Size()
-		if i != j {
-			continue
-		}
-		if snet.Contains(ip.IP) {
-			return s
-		}
-	}
-
-	return nil
+// getSubnetforIPv4 returns the ipv4 subnet to which the given IP belongs
+func (n *network) getSubnetforIPv4(ip *net.IPNet) *ipSubnet {
+	return getSubnetForIP(ip, n.config.Ipv4Subnets)
 }
 
 // getSubnetforIPv6 returns the ipv6 subnet to which the given IP belongs
-func (n *network) getSubnetforIPv6(ip *net.IPNet) *ipv6Subnet {
-	for _, s := range n.config.Ipv6Subnets {
+func (n *network) getSubnetforIPv6(ip *net.IPNet) *ipSubnet {
+	return getSubnetForIP(ip, n.config.Ipv6Subnets)
+}
+
+func getSubnetForIP(ip *net.IPNet, subnets []*ipSubnet) *ipSubnet {
+	for _, s := range subnets {
 		_, snet, err := net.ParseCIDR(s.SubnetIP)
 		if err != nil {
 			return nil

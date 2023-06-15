@@ -1,5 +1,5 @@
-//go:build linux || freebsd
-// +build linux freebsd
+//go:build linux || freebsd || inno
+// +build linux freebsd inno
 
 package main
 
@@ -10,8 +10,8 @@ import (
 	"github.com/docker/docker/daemon/config"
 	"github.com/docker/docker/opts"
 	"github.com/docker/docker/pkg/homedir"
-	"github.com/docker/docker/pkg/rootless"
 	"github.com/docker/docker/registry"
+	"github.com/docker/docker/rootless"
 	"github.com/spf13/pflag"
 )
 
@@ -43,7 +43,7 @@ func installConfigFlags(conf *config.Config, flags *pflag.FlagSet) error {
 	flags.IPVar(&conf.BridgeConfig.DefaultIP, "ip", net.IPv4zero, "Default IP when binding container ports")
 	flags.BoolVar(&conf.BridgeConfig.EnableUserlandProxy, "userland-proxy", true, "Use userland proxy for loopback traffic")
 	flags.StringVar(&conf.BridgeConfig.UserlandProxyPath, "userland-proxy-path", conf.BridgeConfig.UserlandProxyPath, "Path to the userland proxy binary")
-	flags.StringVar(&conf.CgroupParent, "cgroup-parent", "", "Set parent cgroup for all containers")
+	// flags.StringVar(&conf.CgroupParent, "cgroup-parent", "", "Set parent cgroup for all containers")
 	flags.StringVar(&conf.RemappedRoot, "userns-remap", "", "User/Group setting for user namespaces")
 	flags.BoolVar(&conf.LiveRestoreEnabled, "live-restore", false, "Enable live restore of docker when containers are still running")
 	flags.IntVar(&conf.OOMScoreAdjust, "oom-score-adjust", 0, "Set the oom_score_adj for the daemon")
@@ -51,7 +51,7 @@ func installConfigFlags(conf *config.Config, flags *pflag.FlagSet) error {
 	flags.StringVar(&conf.InitPath, "init-path", "", "Path to the docker-init binary")
 	flags.Int64Var(&conf.CPURealtimePeriod, "cpu-rt-period", 0, "Limit the CPU real-time period in microseconds for the parent cgroup for all containers (not supported with cgroups v2)")
 	flags.Int64Var(&conf.CPURealtimeRuntime, "cpu-rt-runtime", 0, "Limit the CPU real-time runtime in microseconds for the parent cgroup for all containers (not supported with cgroups v2)")
-	flags.StringVar(&conf.SeccompProfile, "seccomp-profile", conf.SeccompProfile, `Path to seccomp profile. Use "unconfined" to disable the default seccomp profile`)
+	// flags.StringVar(&conf.SeccompProfile, "seccomp-profile", conf.SeccompProfile, `Path to seccomp profile. Use "unconfined" to disable the default seccomp profile`)
 	flags.Var(&conf.ShmSize, "default-shm-size", "Default shm size for containers")
 	flags.BoolVar(&conf.NoNewPrivileges, "no-new-privileges", false, "Set no-new-privileges by default for new containers")
 	flags.StringVar(&conf.IpcMode, "default-ipc-mode", conf.IpcMode, `Default mode for containers ipc ("shareable" | "private")`)
@@ -59,7 +59,7 @@ func installConfigFlags(conf *config.Config, flags *pflag.FlagSet) error {
 	// rootless needs to be explicitly specified for running "rootful" dockerd in rootless dockerd (#38702)
 	// Note that conf.BridgeConfig.UserlandProxyPath and honorXDG are configured according to the value of rootless.RunningWithRootlessKit, not the value of --rootless.
 	flags.BoolVar(&conf.Rootless, "rootless", conf.Rootless, "Enable rootless mode; typically used with RootlessKit")
-	flags.StringVar(&conf.CgroupNamespaceMode, "default-cgroupns-mode", conf.CgroupNamespaceMode, `Default mode for containers cgroup namespace ("host" | "private")`)
+	// flags.StringVar(&conf.CgroupNamespaceMode, "default-cgroupns-mode", conf.CgroupNamespaceMode, `Default mode for containers cgroup namespace ("host" | "private")`)
 	return nil
 }
 

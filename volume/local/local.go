@@ -371,9 +371,11 @@ func (v *localVolume) saveOpts() error {
 
 // getAddress finds out address/hostname from options
 func getAddress(opts string) string {
-	for _, opt := range strings.Split(opts, ",") {
-		if strings.HasPrefix(opt, "addr=") {
-			return strings.TrimPrefix(opt, "addr=")
+	optsList := strings.Split(opts, ",")
+	for i := 0; i < len(optsList); i++ {
+		if strings.HasPrefix(optsList[i], "addr=") {
+			addr := strings.SplitN(optsList[i], "=", 2)[1]
+			return addr
 		}
 	}
 	return ""
@@ -381,9 +383,11 @@ func getAddress(opts string) string {
 
 // getPassword finds out a password from options
 func getPassword(opts string) string {
-	for _, opt := range strings.Split(opts, ",") {
-		if strings.HasPrefix(opt, "password=") {
-			return strings.TrimPrefix(opt, "password=")
+	optsList := strings.Split(opts, ",")
+	for i := 0; i < len(optsList); i++ {
+		if strings.HasPrefix(optsList[i], "password=") {
+			passwd := strings.SplitN(optsList[i], "=", 2)[1]
+			return passwd
 		}
 	}
 	return ""

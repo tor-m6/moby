@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"github.com/docker/docker/mystrings"
 )
 
 type settable struct {
@@ -93,11 +92,11 @@ func (set *settable) isSettable(allowedSettableFields []string, settable []strin
 
 func updateSettingsEnv(env *[]string, set *settable) {
 	for i, e := range *env {
-		if name, _, _ := mystrings.Cut(e, "="); name == set.name {
-			(*env)[i] = set.name + "=" + set.value
+		if parts := strings.SplitN(e, "=", 2); parts[0] == set.name {
+			(*env)[i] = fmt.Sprintf("%s=%s", set.name, set.value)
 			return
 		}
 	}
 
-	*env = append(*env, set.name+"="+set.value)
+	*env = append(*env, fmt.Sprintf("%s=%s", set.name, set.value))
 }

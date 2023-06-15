@@ -1,19 +1,17 @@
 package libnetwork
 
 import (
-	"container/heap"
 	"encoding/json"
 	"fmt"
 	"net"
-	"strings"
 	"sync"
 
-	"github.com/Sirupsen/logrus"
-	"github.com/docker/libnetwork/datastore"
-	"github.com/docker/libnetwork/ipamapi"
-	"github.com/docker/libnetwork/netlabel"
-	"github.com/docker/libnetwork/options"
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/datastore"
+	"github.com/docker/docker/libnetwork/ipamapi"
+	"github.com/docker/docker/libnetwork/netlabel"
+	"github.com/docker/docker/libnetwork/options"
+	"github.com/docker/docker/libnetwork/types"
+	"github.com/sirupsen/logrus"
 )
 
 // Endpoint represents a logical connection between a network and a sandbox.
@@ -56,12 +54,10 @@ type endpoint struct {
 	iface             *endpointInterface
 	joinInfo          *endpointJoinInfo
 	sandboxID         string
-	locator           string
 	exposedPorts      []types.TransportPort
 	anonymous         bool
 	disableResolution bool
 	generic           map[string]interface{}
-	joinLeaveDone     chan struct{}
 	prefAddress       net.IP
 	prefAddressV6     net.IP
 	ipamOptions       map[string]string
@@ -75,6 +71,7 @@ type endpoint struct {
 	dbIndex           uint64
 	dbExists          bool
 	serviceEnabled    bool
+	loadBalancer      bool
 	sync.Mutex
 }
 
@@ -92,7 +89,6 @@ func (ep *endpoint) MarshalJSON() ([]byte, error) {
 		epMap["generic"] = ep.generic
 	}
 	epMap["sandbox"] = ep.sandboxID
-	epMap["locator"] = ep.locator
 	epMap["anonymous"] = ep.anonymous
 	epMap["disableResolution"] = ep.disableResolution
 	epMap["myAliases"] = ep.myAliases
@@ -101,6 +97,7 @@ func (ep *endpoint) MarshalJSON() ([]byte, error) {
 	epMap["virtualIP"] = ep.virtualIP.String()
 	epMap["ingressPorts"] = ep.ingressPorts
 	epMap["svcAliases"] = ep.svcAliases
+	epMap["loadBalancer"] = ep.loadBalancer
 
 	return json.Marshal(epMap)
 }
@@ -116,19 +113,25 @@ func (ep *endpoint) UnmarshalJSON(b []byte) (err error) {
 	ep.name = epMap["name"].(string)
 	ep.id = epMap["id"].(string)
 
+	// TODO(cpuguy83): So yeah, this isn't checking any errors anywhere.
+	// Seems like we should be checking errors even because of memory related issues that can arise.
+	// Alas it seems like given the nature of this data we could introduce problems if we start checking these errors.
+	//
+	// If anyone ever comes here and figures out one way or another if we can/should be checking these errors and it turns out we can't... then please document *why*
+
 	ib, _ := json.Marshal(epMap["ep_iface"])
-	json.Unmarshal(ib, &ep.iface)
+	json.Unmarshal(ib, &ep.iface) //nolint:errcheck
 
 	jb, _ := json.Marshal(epMap["joinInfo"])
-	json.Unmarshal(jb, &ep.joinInfo)
+	json.Unmarshal(jb, &ep.joinInfo) //nolint:errcheck
 
 	tb, _ := json.Marshal(epMap["exposed_ports"])
 	var tPorts []types.TransportPort
-	json.Unmarshal(tb, &tPorts)
+	json.Unmarshal(tb, &tPorts) //nolint:errcheck
 	ep.exposedPorts = tPorts
 
 	cb, _ := json.Marshal(epMap["sandbox"])
-	json.Unmarshal(cb, &ep.sandboxID)
+	json.Unmarshal(cb, &ep.sandboxID) //nolint:errcheck
 
 	if v, ok := epMap["generic"]; ok {
 		ep.generic = v.(map[string]interface{})
@@ -175,7 +178,6 @@ func (ep *endpoint) UnmarshalJSON(b []byte) (err error) {
 				tplist = append(tplist, tp)
 			}
 			ep.generic[netlabel.ExposedPorts] = tplist
-
 		}
 	}
 
@@ -184,9 +186,6 @@ func (ep *endpoint) UnmarshalJSON(b []byte) (err error) {
 	}
 	if v, ok := epMap["disableResolution"]; ok {
 		ep.disableResolution = v.(bool)
-	}
-	if l, ok := epMap["locator"]; ok {
-		ep.locator = l.(string)
 	}
 
 	if sn, ok := epMap["svcName"]; ok {
@@ -201,19 +200,23 @@ func (ep *endpoint) UnmarshalJSON(b []byte) (err error) {
 		ep.virtualIP = net.ParseIP(vip.(string))
 	}
 
+	if v, ok := epMap["loadBalancer"]; ok {
+		ep.loadBalancer = v.(bool)
+	}
+
 	sal, _ := json.Marshal(epMap["svcAliases"])
 	var svcAliases []string
-	json.Unmarshal(sal, &svcAliases)
+	json.Unmarshal(sal, &svcAliases) //nolint:errcheck
 	ep.svcAliases = svcAliases
 
 	pc, _ := json.Marshal(epMap["ingressPorts"])
 	var ingressPorts []*PortConfig
-	json.Unmarshal(pc, &ingressPorts)
+	json.Unmarshal(pc, &ingressPorts) //nolint:errcheck
 	ep.ingressPorts = ingressPorts
 
 	ma, _ := json.Marshal(epMap["myAliases"])
 	var myAliases []string
-	json.Unmarshal(ma, &myAliases)
+	json.Unmarshal(ma, &myAliases) //nolint:errcheck
 	ep.myAliases = myAliases
 	return nil
 }
@@ -230,7 +233,6 @@ func (ep *endpoint) CopyTo(o datastore.KVObject) error {
 	dstEp.name = ep.name
 	dstEp.id = ep.id
 	dstEp.sandboxID = ep.sandboxID
-	dstEp.locator = ep.locator
 	dstEp.dbIndex = ep.dbIndex
 	dstEp.dbExists = ep.dbExists
 	dstEp.anonymous = ep.anonymous
@@ -238,6 +240,7 @@ func (ep *endpoint) CopyTo(o datastore.KVObject) error {
 	dstEp.svcName = ep.svcName
 	dstEp.svcID = ep.svcID
 	dstEp.virtualIP = ep.virtualIP
+	dstEp.loadBalancer = ep.loadBalancer
 
 	dstEp.svcAliases = make([]string, len(ep.svcAliases))
 	copy(dstEp.svcAliases, ep.svcAliases)
@@ -247,12 +250,16 @@ func (ep *endpoint) CopyTo(o datastore.KVObject) error {
 
 	if ep.iface != nil {
 		dstEp.iface = &endpointInterface{}
-		ep.iface.CopyTo(dstEp.iface)
+		if err := ep.iface.CopyTo(dstEp.iface); err != nil {
+			return err
+		}
 	}
 
 	if ep.joinInfo != nil {
 		dstEp.joinInfo = &endpointJoinInfo{}
-		ep.joinInfo.CopyTo(dstEp.joinInfo)
+		if err := ep.joinInfo.CopyTo(dstEp.joinInfo); err != nil {
+			return err
+		}
 	}
 
 	dstEp.exposedPorts = make([]types.TransportPort, len(ep.exposedPorts))
@@ -346,17 +353,6 @@ func (ep *endpoint) KeyPrefix() []string {
 	}
 
 	return []string{datastore.EndpointKeyPrefix, ep.network.id}
-}
-
-func (ep *endpoint) networkIDFromKey(key string) (string, error) {
-	// endpoint Key structure : docker/libnetwork/endpoint/${network-id}/${endpoint-id}
-	// it's an invalid key if the key doesn't have all the 5 key elements above
-	keyElements := strings.Split(key, "/")
-	if !strings.HasPrefix(key, datastore.Key(datastore.EndpointKeyPrefix)) || len(keyElements) < 5 {
-		return "", fmt.Errorf("invalid endpoint key : %v", key)
-	}
-	// network-id is placed at index=3. pls refer to endpoint.Key() method
-	return strings.Split(key, "/")[3], nil
 }
 
 func (ep *endpoint) Value() []byte {
@@ -491,12 +487,16 @@ func (ep *endpoint) sbJoin(sb *sandbox, options ...EndpointOption) (err error) {
 		n.getController().watchSvcRecord(ep)
 	}
 
-	if doUpdateHostsFile(n, sb) {
-		address := ""
-		if ip := ep.getFirstInterfaceAddress(); ip != nil {
-			address = ip.String()
+	// Do not update hosts file with internal networks endpoint IP
+	if !n.ingress && n.Name() != libnGWNetwork {
+		var addresses []string
+		if ip := ep.getFirstInterfaceIPv4Address(); ip != nil {
+			addresses = append(addresses, ip.String())
 		}
-		if err = sb.updateHostsFile(address); err != nil {
+		if ip := ep.getFirstInterfaceIPv6Address(); ip != nil {
+			addresses = append(addresses, ip.String())
+		}
+		if err = sb.updateHostsFile(addresses); err != nil {
 			return err
 		}
 	}
@@ -507,9 +507,7 @@ func (ep *endpoint) sbJoin(sb *sandbox, options ...EndpointOption) (err error) {
 	// Current endpoint providing external connectivity for the sandbox
 	extEp := sb.getGatewayEndpoint()
 
-	sb.Lock()
-	heap.Push(&sb.endpoints, ep)
-	sb.Unlock()
+	sb.addEndpoint(ep)
 	defer func() {
 		if err != nil {
 			sb.removeEndpoint(ep)
@@ -535,6 +533,12 @@ func (ep *endpoint) sbJoin(sb *sandbox, options ...EndpointOption) (err error) {
 			}
 		}
 	}()
+
+	// Load balancing endpoints should never have a default gateway nor
+	// should they alter the status of a network's default gateway
+	if ep.loadBalancer && !sb.ingress {
+		return nil
+	}
 
 	if sb.needDefaultGW() && sb.getEndpointInGWNetwork() == nil {
 		return sb.setupDefaultGW()
@@ -575,7 +579,6 @@ func (ep *endpoint) sbJoin(sb *sandbox, options ...EndpointOption) (err error) {
 					ep.Name(), ep.ID(), err)
 			}
 		}
-
 	}
 
 	if !sb.needDefaultGW() {
@@ -586,10 +589,6 @@ func (ep *endpoint) sbJoin(sb *sandbox, options ...EndpointOption) (err error) {
 	}
 
 	return nil
-}
-
-func doUpdateHostsFile(n *network, sb *sandbox) bool {
-	return !n.ingress && n.Name() != libnGWNetwork
 }
 
 func (ep *endpoint) rename(name string) error {
@@ -637,10 +636,14 @@ func (ep *endpoint) rename(name string) error {
 		}
 		defer func() {
 			if err != nil {
-				ep.deleteServiceInfoFromCluster(sb, true, "rename")
+				if err2 := ep.deleteServiceInfoFromCluster(sb, true, "rename"); err2 != nil {
+					logrus.WithField("main error", err).WithError(err2).Debug("Error during cleanup due deleting service info from cluster while cleaning up due to other error")
+				}
 				ep.name = oldName
 				ep.anonymous = oldAnonymous
-				ep.addServiceInfoToCluster(sb)
+				if err2 := ep.addServiceInfoToCluster(sb); err2 != nil {
+					logrus.WithField("main error", err).WithError(err2).Debug("Error during cleanup due adding service to from cluster while cleaning up due to other error")
+				}
 			}
 		}()
 	} else {
@@ -666,7 +669,7 @@ func (ep *endpoint) rename(name string) error {
 	// benign error. Besides there is no meaningful recovery that
 	// we can do. When the cluster recovers subsequent EpCnt update
 	// will force the peers to get the correct EP name.
-	n.getEpCnt().updateStore()
+	_ = n.getEpCnt().updateStore()
 
 	return err
 }
@@ -902,12 +905,23 @@ func (ep *endpoint) getSandbox() (*sandbox, bool) {
 	return ps, ok
 }
 
-func (ep *endpoint) getFirstInterfaceAddress() net.IP {
+func (ep *endpoint) getFirstInterfaceIPv4Address() net.IP {
 	ep.Lock()
 	defer ep.Unlock()
 
 	if ep.iface.addr != nil {
 		return ep.iface.addr.IP
+	}
+
+	return nil
+}
+
+func (ep *endpoint) getFirstInterfaceIPv6Address() net.IP {
+	ep.Lock()
+	defer ep.Unlock()
+
+	if ep.iface.addrv6 != nil {
+		return ep.iface.addrv6.IP
 	}
 
 	return nil
@@ -994,7 +1008,7 @@ func CreateOptionDisableResolution() EndpointOption {
 	}
 }
 
-//CreateOptionAlias function returns an option setter for setting endpoint alias
+// CreateOptionAlias function returns an option setter for setting endpoint alias
 func CreateOptionAlias(name string, alias string) EndpointOption {
 	return func(ep *endpoint) {
 		if ep.aliases == nil {
@@ -1015,16 +1029,23 @@ func CreateOptionService(name, id string, vip net.IP, ingressPorts []*PortConfig
 	}
 }
 
-//CreateOptionMyAlias function returns an option setter for setting endpoint's self alias
+// CreateOptionMyAlias function returns an option setter for setting endpoint's self alias
 func CreateOptionMyAlias(alias string) EndpointOption {
 	return func(ep *endpoint) {
 		ep.myAliases = append(ep.myAliases, alias)
 	}
 }
 
+// CreateOptionLoadBalancer function returns an option setter for denoting the endpoint is a load balancer for a network
+func CreateOptionLoadBalancer() EndpointOption {
+	return func(ep *endpoint) {
+		ep.loadBalancer = true
+	}
+}
+
 // JoinOptionPriority function returns an option setter for priority option to
 // be passed to the endpoint.Join() method.
-func JoinOptionPriority(ep Endpoint, prio int) EndpointOption {
+func JoinOptionPriority(prio int) EndpointOption {
 	return func(ep *endpoint) {
 		// ep lock already acquired
 		c := ep.network.getController()
@@ -1195,7 +1216,9 @@ func (c *controller) cleanupLocalEndpoints() {
 		epCnt := n.getEpCnt().EndpointCnt()
 		if epCnt != uint64(len(epl)) {
 			logrus.Infof("Fixing inconsistent endpoint_cnt for network %s. Expected=%d, Actual=%d", n.name, len(epl), epCnt)
-			n.getEpCnt().setCnt(uint64(len(epl)))
+			if err := n.getEpCnt().setCnt(uint64(len(epl))); err != nil {
+				logrus.WithField("network", n.name).WithError(err).Warn("Error while fixing inconsistent endpoint_cnt for network")
+			}
 		}
 	}
 }

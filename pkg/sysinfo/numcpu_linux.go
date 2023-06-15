@@ -1,6 +1,8 @@
 package sysinfo // import "github.com/docker/docker/pkg/sysinfo"
 
 import (
+	"runtime"
+
 	"golang.org/x/sys/unix"
 )
 
@@ -20,4 +22,12 @@ func numCPU() int {
 	}
 
 	return mask.Count()
+}
+
+// NumCPU returns the number of CPUs which are currently online
+func NumCPU() int {
+	if ncpu := numCPU(); ncpu > 0 {
+		return ncpu
+	}
+	return runtime.NumCPU()
 }

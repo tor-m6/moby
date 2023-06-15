@@ -23,7 +23,7 @@ func Run(name string, handler svc.Handler) error {
 	cmds := make(chan svc.ChangeRequest)
 	changes := make(chan svc.Status)
 
-	sig := make(chan os.Signal, 1)
+	sig := make(chan os.Signal)
 	signal.Notify(sig)
 
 	go func() {

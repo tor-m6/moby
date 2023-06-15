@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"sort"
 	"strings"
 
@@ -118,7 +117,8 @@ type Builder struct {
 	Aux    *streamformatter.AuxFormatter
 	Output io.Writer
 
-	docker builder.Backend
+	docker    builder.Backend
+	clientCtx context.Context
 
 	idMapping        idtools.IdentityMapping
 	disableCommit    bool
@@ -130,18 +130,19 @@ type Builder struct {
 }
 
 // newBuilder creates a new Dockerfile builder from an optional dockerfile and a Options.
-func newBuilder(ctx context.Context, options builderOptions) (*Builder, error) {
+func newBuilder(clientCtx context.Context, options builderOptions) (*Builder, error) {
 	config := options.Options
 	if config == nil {
 		config = new(types.ImageBuildOptions)
 	}
 
-	imageProber, err := newImageProber(ctx, options.Backend, config.CacheFrom, config.NoCache)
+	imageProber, err := newImageProber(clientCtx, options.Backend, config.CacheFrom, config.NoCache)
 	if err != nil {
 		return nil, err
 	}
 
 	b := &Builder{
+		clientCtx:        clientCtx,
 		options:          config,
 		Stdout:           options.ProgressWriter.StdoutFormatter,
 		Stderr:           options.ProgressWriter.StderrFormatter,
@@ -149,7 +150,7 @@ func newBuilder(ctx context.Context, options builderOptions) (*Builder, error) {
 		Output:           options.ProgressWriter.Output,
 		docker:           options.Backend,
 		idMapping:        options.IDMapping,
-		imageSources:     newImageSources(options),
+		imageSources:     newImageSources(clientCtx, options),
 		pathCache:        options.PathCache,
 		imageProber:      imageProber,
 		containerManager: newContainerManager(options.Backend),
@@ -283,7 +284,7 @@ func (b *Builder) dispatchDockerfileWithCancellation(ctx context.Context, parseR
 		fmt.Fprintf(b.Stdout, " ---> %s\n", stringid.TruncateID(dispatchRequest.state.imageID))
 		for _, cmd := range stage.Commands {
 			select {
-			case <-ctx.Done():
+			case <-b.clientCtx.Done():
 				logrus.Debug("Builder: build cancelled!")
 				fmt.Fprint(b.Stdout, "Build cancelled\n")
 				buildsFailed.WithValues(metricsBuildCanceled).Inc()
@@ -345,8 +346,8 @@ func BuildFromConfig(ctx context.Context, config *container.Config, changes []st
 		}
 	}
 
-	b.Stdout = ioutil.Discard
-	b.Stderr = ioutil.Discard
+	b.Stdout = io.Discard
+	b.Stderr = io.Discard
 	b.disableCommit = true
 
 	var commands []instructions.Command

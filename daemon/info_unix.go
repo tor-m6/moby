@@ -11,9 +11,9 @@ import (
 	"strings"
 
 	"github.com/docker/docker/api/types"
-	containertypes "github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/pkg/rootless"
+	// containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/sysinfo"
+	"github.com/docker/docker/rootless"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -357,7 +357,8 @@ func parseRuntimeVersion(v string) (runtime string, version string, commit strin
 }
 
 func (daemon *Daemon) cgroupNamespacesEnabled(sysInfo *sysinfo.SysInfo) bool {
-	return sysInfo.CgroupNamespaces && containertypes.CgroupnsMode(daemon.configStore.CgroupNamespaceMode).IsPrivate()
+	// return sysInfo.CgroupNamespaces && containertypes.CgroupnsMode(daemon.configStore.CgroupNamespaceMode).IsPrivate()
+	return false
 }
 
 // Rootless returns true if daemon is running in rootless mode

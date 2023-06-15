@@ -1,14 +1,14 @@
+//go:build linux || freebsd
 // +build linux freebsd
 
 package testutils
 
 import (
-	"os"
 	"runtime"
 	"syscall"
 	"testing"
 
-	"github.com/docker/libnetwork/ns"
+	"github.com/docker/docker/libnetwork/ns"
 )
 
 // SetupTestOSContext joins a new network namespace, and returns its associated
@@ -16,8 +16,7 @@ import (
 //
 // Example usage:
 //
-//     defer SetupTestOSContext(t)()
-//
+//	defer SetupTestOSContext(t)()
 func SetupTestOSContext(t *testing.T) func() {
 	runtime.LockOSThread()
 	if err := syscall.Unshare(syscall.CLONE_NEWNET); err != nil {
@@ -41,9 +40,4 @@ func SetupTestOSContext(t *testing.T) func() {
 		}
 		runtime.UnlockOSThread()
 	}
-}
-
-// RunningOnCircleCI returns true if being executed on libnetwork Circle CI setup
-func RunningOnCircleCI() bool {
-	return os.Getenv("CIRCLECI") != ""
 }

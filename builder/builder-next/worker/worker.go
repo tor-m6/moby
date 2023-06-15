@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	nethttp "net/http"
 	"time"
 
@@ -425,7 +424,7 @@ func (ld *layerDescriptor) Download(ctx context.Context, progressOutput pkgprogr
 		return nil, 0, err
 	}
 
-	return ioutil.NopCloser(content.NewReader(ra)), ld.desc.Size, nil
+	return io.NopCloser(content.NewReader(ra)), ld.desc.Size, nil
 }
 
 func (ld *layerDescriptor) Close() {

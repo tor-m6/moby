@@ -8,6 +8,7 @@ import (
 
 	"github.com/moby/swarmkit/v2/manager/encryption"
 	"github.com/pkg/errors"
+	"go.etcd.io/etcd/client/pkg/v3/fileutil"
 	"go.etcd.io/etcd/raft/v3/raftpb"
 	"go.etcd.io/etcd/server/v3/etcdserver/api/snap"
 )
@@ -117,10 +118,12 @@ func MigrateSnapshot(oldDir, newDir string, oldFactory, newFactory SnapFactory) 
 	}
 
 	tmpdirpath := filepath.Clean(newDir) + ".tmp"
-	if err := os.RemoveAll(tmpdirpath); err != nil {
-		return errors.Wrap(err, "could not remove temporary snapshot directory")
+	if fileutil.Exist(tmpdirpath) {
+		if err := os.RemoveAll(tmpdirpath); err != nil {
+			return errors.Wrap(err, "could not remove temporary snapshot directory")
+		}
 	}
-	if err := os.MkdirAll(tmpdirpath, 0o700); err != nil {
+	if err := fileutil.CreateDirAll(tmpdirpath); err != nil {
 		return errors.Wrap(err, "could not create temporary snapshot directory")
 	}
 	tmpSnapshotter := newFactory.New(tmpdirpath)

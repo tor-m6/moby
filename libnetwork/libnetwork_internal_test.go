@@ -4,18 +4,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"runtime"
 	"testing"
 	"time"
 
-	"github.com/docker/libnetwork/common"
-	"github.com/docker/libnetwork/datastore"
-	"github.com/docker/libnetwork/discoverapi"
-	"github.com/docker/libnetwork/driverapi"
-	"github.com/docker/libnetwork/ipamapi"
-	"github.com/docker/libnetwork/netlabel"
-	"github.com/docker/libnetwork/netutils"
-	"github.com/docker/libnetwork/testutils"
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/datastore"
+	"github.com/docker/docker/libnetwork/discoverapi"
+	"github.com/docker/docker/libnetwork/driverapi"
+	"github.com/docker/docker/libnetwork/internal/setmatrix"
+	"github.com/docker/docker/libnetwork/ipamapi"
+	"github.com/docker/docker/libnetwork/netlabel"
+	"github.com/docker/docker/libnetwork/netutils"
+	"github.com/docker/docker/libnetwork/testutils"
+	"github.com/docker/docker/libnetwork/types"
+	"gotest.tools/v3/skip"
 )
 
 func TestNetworkMarshalling(t *testing.T) {
@@ -156,7 +158,7 @@ func TestNetworkMarshalling(t *testing.T) {
 }
 
 func printIpamConf(list []*IpamConf) string {
-	s := fmt.Sprintf("\n[]*IpamConfig{")
+	s := "\n[]*IpamConfig{"
 	for _, i := range list {
 		s = fmt.Sprintf("%s %v,", s, i)
 	}
@@ -165,7 +167,7 @@ func printIpamConf(list []*IpamConf) string {
 }
 
 func printIpamInfo(list []*IpamInfo) string {
-	s := fmt.Sprintf("\n[]*IpamInfo{")
+	s := "\n[]*IpamInfo{"
 	for _, i := range list {
 		s = fmt.Sprintf("%s\n{\n%s\n}", s, i)
 	}
@@ -332,7 +334,6 @@ func TestAuxAddresses(t *testing.T) {
 	}
 
 	for _, i := range input {
-
 		n.ipamV4Config = []*IpamConf{{PreferredPool: i.masterPool, SubPool: i.subPool, AuxAddresses: i.auxAddresses}}
 
 		err = n.ipamAllocate()
@@ -346,6 +347,8 @@ func TestAuxAddresses(t *testing.T) {
 }
 
 func TestSRVServiceQuery(t *testing.T) {
+	skip.If(t, runtime.GOOS == "windows", "test only works on linux")
+
 	c, err := New()
 	if err != nil {
 		t.Fatal(err)
@@ -383,9 +386,9 @@ func TestSRVServiceQuery(t *testing.T) {
 	}
 
 	sr := svcInfo{
-		svcMap:     common.NewSetMatrix(),
-		svcIPv6Map: common.NewSetMatrix(),
-		ipMap:      common.NewSetMatrix(),
+		svcMap:     setmatrix.NewSetMatrix(),
+		svcIPv6Map: setmatrix.NewSetMatrix(),
+		ipMap:      setmatrix.NewSetMatrix(),
 		service:    make(map[string][]servicePorts),
 	}
 	// backing container for the service
@@ -442,6 +445,8 @@ func TestSRVServiceQuery(t *testing.T) {
 }
 
 func TestServiceVIPReuse(t *testing.T) {
+	skip.If(t, runtime.GOOS == "windows", "test only works on linux")
+
 	c, err := New()
 	if err != nil {
 		t.Fatal(err)
@@ -555,6 +560,8 @@ func TestServiceVIPReuse(t *testing.T) {
 }
 
 func TestIpamReleaseOnNetDriverFailures(t *testing.T) {
+	skip.If(t, runtime.GOOS == "windows", "test only works on linux")
+
 	if !testutils.IsRunningInContainer() {
 		defer testutils.SetupTestOSContext(t)()
 	}
@@ -586,7 +593,9 @@ func TestIpamReleaseOnNetDriverFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gnw.Delete()
+	if err := gnw.Delete(); err != nil {
+		t.Fatal(err)
+	}
 
 	// Now check whether ipam release works on endpoint creation failure
 	bd.failNetworkCreation = false
@@ -594,27 +603,35 @@ func TestIpamReleaseOnNetDriverFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer bnw.Delete()
+	defer func() {
+		if err := bnw.Delete(); err != nil {
+			t.Fatal(err)
+		}
+	}()
 
 	if _, err := bnw.CreateEndpoint("ep0"); err == nil {
 		t.Fatalf("bad network driver should have failed endpoint creation")
 	}
 
 	// Now create good bridge network with different gateway
-	ipamOpt2 := NetworkOptionIpam(ipamapi.DefaultIPAM, "", []*IpamConf{{PreferredPool: "10.34.0.0/16", Gateway: "10.34.255.253"}}, nil, nil)
+	ipamOpt2 := NetworkOptionIpam(ipamapi.DefaultIPAM, "", []*IpamConf{{PreferredPool: "10.35.0.0/16", Gateway: "10.35.255.253"}}, nil, nil)
 	gnw, err = c.NewNetwork("bridge", "goodnet2", "", ipamOpt2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer gnw.Delete()
+	defer func() {
+		if err := gnw.Delete(); err != nil {
+			t.Fatal(err)
+		}
+	}()
 
 	ep, err := gnw.CreateEndpoint("ep1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ep.Delete(false)
+	defer ep.Delete(false) //nolint:errcheck
 
-	expectedIP, _ := types.ParseCIDR("10.34.0.1/16")
+	expectedIP, _ := types.ParseCIDR("10.35.0.1/16")
 	if !types.CompareIPNet(ep.Info().Iface().Address(), expectedIP) {
 		t.Fatalf("Ipam release must have failed, endpoint has unexpected address: %v", ep.Info().Iface().Address())
 	}

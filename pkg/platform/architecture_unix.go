@@ -16,5 +16,10 @@ func runtimeArchitecture() (string, error) {
 	if err := unix.Uname(utsname); err != nil {
 		return "", err
 	}
-	return unix.ByteSliceToString(utsname.Machine[:]), nil
+	b := make([]byte, len(utsname.Machine))
+    for i, v := range utsname.Machine {
+        b[i] = byte(v)
+    }
+
+	return unix.ByteSliceToString(b[:]), nil
 }

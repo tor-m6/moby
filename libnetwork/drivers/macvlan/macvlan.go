@@ -1,30 +1,30 @@
+//go:build linux
+// +build linux
+
 package macvlan
 
 import (
 	"net"
 	"sync"
 
-	"github.com/docker/libnetwork/datastore"
-	"github.com/docker/libnetwork/discoverapi"
-	"github.com/docker/libnetwork/driverapi"
-	"github.com/docker/libnetwork/osl"
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/datastore"
+	"github.com/docker/docker/libnetwork/discoverapi"
+	"github.com/docker/docker/libnetwork/driverapi"
+	"github.com/docker/docker/libnetwork/types"
 )
 
 const (
 	vethLen             = 7
 	containerVethPrefix = "eth"
 	vethPrefix          = "veth"
-	macvlanType         = "macvlan"  // driver type name
-	modePrivate         = "private"  // macvlan mode private
-	modeVepa            = "vepa"     // macvlan mode vepa
-	modeBridge          = "bridge"   // macvlan mode bridge
-	modePassthru        = "passthru" // macvlan mode passthrough
-	parentOpt           = "parent"   // parent interface -o parent
-	modeOpt             = "_mode"    // macvlan mode ux opt suffix
+	driverName          = "macvlan"      // driver type name
+	modePrivate         = "private"      // macvlan mode private
+	modeVepa            = "vepa"         // macvlan mode vepa
+	modeBridge          = "bridge"       // macvlan mode bridge
+	modePassthru        = "passthru"     // macvlan mode passthrough
+	parentOpt           = "parent"       // parent interface -o parent
+	driverModeOpt       = "macvlan_mode" // macvlan mode ux opt suffix
 )
-
-var driverModeOpt = macvlanType + modeOpt // mode --option macvlan_mode
 
 type endpointTable map[string]*endpoint
 
@@ -50,7 +50,6 @@ type endpoint struct {
 
 type network struct {
 	id        string
-	sbox      osl.Sandbox
 	endpoints endpointTable
 	driver    *driver
 	config    *configuration
@@ -66,9 +65,11 @@ func Init(dc driverapi.DriverCallback, config map[string]interface{}) error {
 	d := &driver{
 		networks: networkTable{},
 	}
-	d.initStore(config)
+	if err := d.initStore(config); err != nil {
+		return err
+	}
 
-	return dc.RegisterDriver(macvlanType, d, c)
+	return dc.RegisterDriver(driverName, d, c)
 }
 
 func (d *driver) NetworkAllocate(id string, option map[string]string, ipV4Data, ipV6Data []driverapi.IPAMData) (map[string]string, error) {
@@ -80,11 +81,11 @@ func (d *driver) NetworkFree(id string) error {
 }
 
 func (d *driver) EndpointOperInfo(nid, eid string) (map[string]interface{}, error) {
-	return make(map[string]interface{}, 0), nil
+	return make(map[string]interface{}), nil
 }
 
 func (d *driver) Type() string {
-	return macvlanType
+	return driverName
 }
 
 func (d *driver) IsBuiltIn() bool {

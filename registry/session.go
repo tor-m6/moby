@@ -15,6 +15,7 @@ import (
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/jsonmessage"
+	"github.com/docker/docker/pkg/stringid"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -23,6 +24,7 @@ import (
 type session struct {
 	indexEndpoint *v1Endpoint
 	client        *http.Client
+	id            string
 }
 
 type authTransport struct {
@@ -177,6 +179,7 @@ func newSession(client *http.Client, endpoint *v1Endpoint) *session {
 	return &session{
 		client:        client,
 		indexEndpoint: endpoint,
+		id:            stringid.GenerateRandomID(),
 	}
 }
 
@@ -206,10 +209,10 @@ func (r *session) searchRepositories(term string, limit int) (*registry.SearchRe
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		return nil, errdefs.Unknown(&jsonmessage.JSONError{
+		return nil, &jsonmessage.JSONError{
 			Message: fmt.Sprintf("Unexpected status code %d", res.StatusCode),
 			Code:    res.StatusCode,
-		})
+		}
 	}
 	result := new(registry.SearchResults)
 	return result, errors.Wrap(json.NewDecoder(res.Body).Decode(result), "error decoding registry search results")

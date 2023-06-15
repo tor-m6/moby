@@ -174,11 +174,7 @@ func ReadRepairWAL(
 				return nil, WALData{}, errors.Wrap(err, "failed to decrypt WAL")
 			}
 			// we can only repair ErrUnexpectedEOF and we never repair twice.
-			if repaired || !errors.Is(err, io.ErrUnexpectedEOF) {
-				// TODO(thaJeztah): should ReadRepairWAL be updated to handle cases where
-				// some (last) of the files cannot be recovered? ("best effort" recovery?)
-				// Or should an informative error be produced to help the user (which could
-				// mean: remove the last file?). See TestReadRepairWAL for more details.
+			if repaired || err != io.ErrUnexpectedEOF {
 				return nil, WALData{}, errors.Wrap(err, "irreparable WAL error")
 			}
 			if !wal.Repair(nil, walDir) {

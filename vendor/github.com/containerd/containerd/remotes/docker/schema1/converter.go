@@ -24,7 +24,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"strconv"
 	"strings"
 	"sync"
@@ -229,7 +228,7 @@ func (c *Converter) Convert(ctx context.Context, opts ...ConvertOpt) (ocispec.De
 // ReadStripSignature reads in a schema1 manifest and returns a byte array
 // with the "signatures" field stripped
 func ReadStripSignature(schema1Blob io.Reader) ([]byte, error) {
-	b, err := ioutil.ReadAll(io.LimitReader(schema1Blob, manifestSizeLimit)) // limit to 8MB
+	b, err := io.ReadAll(io.LimitReader(schema1Blob, manifestSizeLimit)) // limit to 8MB
 	if err != nil {
 		return nil, err
 	}

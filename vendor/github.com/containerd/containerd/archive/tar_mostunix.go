@@ -1,4 +1,5 @@
 //go:build !windows && !freebsd
+// +build !windows,!freebsd
 
 /*
    Copyright The containerd Authors.
@@ -32,11 +33,11 @@ func mknod(path string, mode uint32, dev uint64) error {
 // lsetxattrCreate wraps unix.Lsetxattr, passes the unix.XATTR_CREATE flag on
 // supported operating systems,and ignores appropriate errors
 func lsetxattrCreate(link string, attr string, data []byte) error {
-	// err := unix.Lsetxattr(link, attr, data, unix.XATTR_CREATE)
-	// if err == unix.ENOTSUP || err == unix.ENODATA || err == unix.EEXIST {
+	err := unix.Lsetxattr(link, attr, data, unix.XATTR_CREATE)
+	if err == unix.ENOTSUP || err == unix.ENODATA || err == unix.EEXIST {
 		return nil
-	// }
-	// return err
+	}
+	return err
 }
 
 // lchmod checks for symlink and changes the mode if not a symlink

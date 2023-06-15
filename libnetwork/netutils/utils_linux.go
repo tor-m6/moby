@@ -1,4 +1,6 @@
+//go:build linux
 // +build linux
+
 // Network utility functions.
 
 package netutils
@@ -8,11 +10,12 @@ import (
 	"net"
 	"strings"
 
-	"github.com/docker/libnetwork/ipamutils"
-	"github.com/docker/libnetwork/ns"
-	"github.com/docker/libnetwork/osl"
-	"github.com/docker/libnetwork/resolvconf"
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/ipamutils"
+	"github.com/docker/docker/libnetwork/ns"
+	"github.com/docker/docker/libnetwork/osl"
+	"github.com/docker/docker/libnetwork/resolvconf"
+	"github.com/docker/docker/libnetwork/types"
+	"github.com/pkg/errors"
 	"github.com/vishvananda/netlink"
 )
 
@@ -30,7 +33,7 @@ func CheckRouteOverlaps(toCheck *net.IPNet) error {
 		return err
 	}
 	for _, network := range networks {
-		if network.Dst != nil && NetworkOverlaps(toCheck, network.Dst) {
+		if network.Dst != nil && network.Scope == netlink.SCOPE_LINK && NetworkOverlaps(toCheck, network.Dst) {
 			return ErrNetworkOverlaps
 		}
 	}
@@ -68,10 +71,7 @@ func GenerateIfaceName(nlh *netlink.Handle, prefix string, len int) (string, err
 // list the first IPv4 address which does not conflict with other
 // interfaces on the system.
 func ElectInterfaceAddresses(name string) ([]*net.IPNet, []*net.IPNet, error) {
-	var (
-		v4Nets []*net.IPNet
-		v6Nets []*net.IPNet
-	)
+	var v4Nets, v6Nets []*net.IPNet
 
 	defer osl.InitOSContext()()
 
@@ -94,10 +94,11 @@ func ElectInterfaceAddresses(name string) ([]*net.IPNet, []*net.IPNet, error) {
 	}
 
 	if link == nil || len(v4Nets) == 0 {
-		// Choose from predefined broad networks
-		v4Net, err := FindAvailableNetwork(ipamutils.PredefinedBroadNetworks)
+		// Choose from predefined local scope networks
+		v4Net, err := FindAvailableNetwork(ipamutils.PredefinedLocalScopeDefaultNetworks)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, errors.Wrapf(err, "PredefinedLocalScopeDefaultNetworks List: %+v",
+				ipamutils.PredefinedLocalScopeDefaultNetworks)
 		}
 		v4Nets = append(v4Nets, v4Net)
 	}

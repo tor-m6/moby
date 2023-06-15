@@ -85,26 +85,23 @@ func TestNewClientWithOpsFromEnv(t *testing.T) {
 		},
 	}
 
-	env.PatchAll(t, nil)
+	defer env.PatchAll(t, nil)()
 	for _, tc := range testcases {
-		tc := tc
-		t.Run(tc.doc, func(t *testing.T) {
-			env.PatchAll(t, tc.envs)
-			client, err := NewClientWithOpts(FromEnv)
-			if tc.expectedError != "" {
-				assert.Check(t, is.Error(err, tc.expectedError))
-			} else {
-				assert.Check(t, err)
-				assert.Check(t, is.Equal(client.ClientVersion(), tc.expectedVersion))
-			}
+		env.PatchAll(t, tc.envs)
+		client, err := NewClientWithOpts(FromEnv)
+		if tc.expectedError != "" {
+			assert.Check(t, is.Error(err, tc.expectedError), tc.doc)
+		} else {
+			assert.Check(t, err, tc.doc)
+			assert.Check(t, is.Equal(client.ClientVersion(), tc.expectedVersion), tc.doc)
+		}
 
-			if tc.envs["DOCKER_TLS_VERIFY"] != "" {
-				// pedantic checking that this is handled correctly
-				tr := client.client.Transport.(*http.Transport)
-				assert.Assert(t, tr.TLSClientConfig != nil)
-				assert.Check(t, is.Equal(tr.TLSClientConfig.InsecureSkipVerify, false))
-			}
-		})
+		if tc.envs["DOCKER_TLS_VERIFY"] != "" {
+			// pedantic checking that this is handled correctly
+			tr := client.client.Transport.(*http.Transport)
+			assert.Assert(t, tr.TLSClientConfig != nil, tc.doc)
+			assert.Check(t, is.Equal(tr.TLSClientConfig.InsecureSkipVerify, false), tc.doc)
+		}
 	}
 }
 

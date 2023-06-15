@@ -30,7 +30,6 @@ import (
 	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/longpath"
 	"github.com/docker/docker/pkg/reexec"
-	"github.com/docker/docker/pkg/system"
 	units "github.com/docker/go-units"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -103,28 +102,25 @@ func InitFilter(home string, options []string, _ idtools.IdentityMapping) (graph
 	if err != nil {
 		return nil, err
 	}
-	if strings.EqualFold(fsType, "refs") {
+	if strings.ToLower(fsType) == "refs" {
 		return nil, fmt.Errorf("%s is on an ReFS volume - ReFS volumes are not supported", home)
 	}
 
-	// Setting file-mode is a no-op on Windows, so passing "0" to make it more
-	// transparent that the filemode passed has no effect.
-	if err = system.MkdirAll(home, 0); err != nil {
-		return nil, errors.Wrapf(err, "windowsfilter failed to create '%s'", home)
+	if err := idtools.MkdirAllAndChown(home, 0700, idtools.Identity{UID: 0, GID: 0}); err != nil {
+		return nil, fmt.Errorf("windowsfilter failed to create '%s': %v", home, err)
 	}
 
-	storageOpt := map[string]string{
-		"size": defaultSandboxSize,
+	storageOpt := make(map[string]string)
+	storageOpt["size"] = defaultSandboxSize
+
+	for _, v := range options {
+		opt := strings.SplitN(v, "=", 2)
+		storageOpt[strings.ToLower(opt[0])] = opt[1]
 	}
 
-	for _, o := range options {
-		k, v, _ := strings.Cut(o, "=")
-		storageOpt[strings.ToLower(k)] = v
-	}
-
-	opts, err := parseStorageOpt(storageOpt)
+	storageOptions, err := parseStorageOpt(storageOpt)
 	if err != nil {
-		return nil, errors.Wrap(err, "windowsfilter failed to parse default storage options")
+		return nil, fmt.Errorf("windowsfilter failed to parse default storage options - %s", err)
 	}
 
 	d := &Driver{
@@ -134,7 +130,7 @@ func InitFilter(home string, options []string, _ idtools.IdentityMapping) (graph
 		},
 		cache:              make(map[string]string),
 		ctr:                graphdriver.NewRefCounter(&checker{}),
-		defaultStorageOpts: opts,
+		defaultStorageOpts: storageOptions,
 	}
 	return d, nil
 }
@@ -223,14 +219,14 @@ func (d *Driver) create(id, parent, mountLabel string, readOnly bool, storageOpt
 			return err
 		}
 
-		storageOpts, err := parseStorageOpt(storageOpt)
+		storageOptions, err := parseStorageOpt(storageOpt)
 		if err != nil {
-			return errors.Wrap(err, "failed to parse storage options")
+			return fmt.Errorf("Failed to parse storage options - %s", err)
 		}
 
 		sandboxSize := d.defaultStorageOpts.size
-		if storageOpts.size != 0 {
-			sandboxSize = storageOpts.size
+		if storageOptions.size != 0 {
+			sandboxSize = storageOptions.size
 		}
 
 		if sandboxSize != 0 {
@@ -244,7 +240,7 @@ func (d *Driver) create(id, parent, mountLabel string, readOnly bool, storageOpt
 		if err2 := hcsshim.DestroyLayer(d.info, id); err2 != nil {
 			logrus.Warnf("Failed to DestroyLayer %s: %s", id, err2)
 		}
-		return errors.Wrapf(err, "cannot create layer with missing parent %s", parent)
+		return fmt.Errorf("Cannot create layer with missing parent %s: %s", parent, err)
 	}
 
 	if err := d.setLayerChain(id, layerChain); err != nil {
@@ -480,7 +476,7 @@ func (d *Driver) Cleanup() error {
 // Diff produces an archive of the changes between the specified
 // layer and its parent layer which may be "".
 // The layer should be mounted when calling this function
-func (d *Driver) Diff(id, _ string) (_ io.ReadCloser, err error) {
+func (d *Driver) Diff(id, parent string) (_ io.ReadCloser, err error) {
 	rID, err := d.resolveID(id)
 	if err != nil {
 		return
@@ -516,7 +512,7 @@ func (d *Driver) Diff(id, _ string) (_ io.ReadCloser, err error) {
 // Changes produces a list of changes between the specified layer
 // and its parent layer. If parent is "", then all changes will be ADD changes.
 // The layer should not be mounted when calling this function.
-func (d *Driver) Changes(id, _ string) ([]archive.Change, error) {
+func (d *Driver) Changes(id, parent string) ([]archive.Change, error) {
 	rID, err := d.resolveID(id)
 	if err != nil {
 		return nil, err
@@ -627,7 +623,9 @@ func (d *Driver) DiffSize(id, parent string) (size int64, err error) {
 
 // GetMetadata returns custom driver information.
 func (d *Driver) GetMetadata(id string) (map[string]string, error) {
-	return map[string]string{"dir": d.dir(id)}, nil
+	m := make(map[string]string)
+	m["dir"] = d.dir(id)
+	return m, nil
 }
 
 func writeTarFromLayer(r hcsshim.LayerReader, w io.Writer) error {
@@ -642,9 +640,10 @@ func writeTarFromLayer(r hcsshim.LayerReader, w io.Writer) error {
 		}
 		if fileInfo == nil {
 			// Write a whiteout file.
-			err = t.WriteHeader(&tar.Header{
+			hdr := &tar.Header{
 				Name: filepath.ToSlash(filepath.Join(filepath.Dir(name), archive.WhiteoutPrefix+filepath.Base(name))),
-			})
+			}
+			err := t.WriteHeader(hdr)
 			if err != nil {
 				return err
 			}
@@ -660,7 +659,7 @@ func writeTarFromLayer(r hcsshim.LayerReader, w io.Writer) error {
 
 // exportLayer generates an archive from a layer based on the given ID.
 func (d *Driver) exportLayer(id string, parentLayerPaths []string) (io.ReadCloser, error) {
-	archiveRdr, w := io.Pipe()
+	archive, w := io.Pipe()
 	go func() {
 		err := winio.RunWithPrivilege(winio.SeBackupPrivilege, func() error {
 			r, err := hcsshim.NewLayerReader(d.info, id, parentLayerPaths)
@@ -678,7 +677,7 @@ func (d *Driver) exportLayer(id string, parentLayerPaths []string) (io.ReadClose
 		w.CloseWithError(err)
 	}()
 
-	return archiveRdr, nil
+	return archive, nil
 }
 
 // writeBackupStreamFromTarAndSaveMutatedFiles reads data from a tar stream and
@@ -814,7 +813,12 @@ func writeLayer(layerData io.Reader, home string, id string, parentLayerPaths ..
 		}()
 	}
 
-	w, err := hcsshim.NewLayerWriter(hcsshim.DriverInfo{Flavour: filterDriver, HomeDir: home}, id, parentLayerPaths)
+	info := hcsshim.DriverInfo{
+		Flavour: filterDriver,
+		HomeDir: home,
+	}
+
+	w, err := hcsshim.NewLayerWriter(info, id, parentLayerPaths)
 	if err != nil {
 		return 0, err
 	}
@@ -855,13 +859,13 @@ func (d *Driver) getLayerChain(id string) ([]string, error) {
 	if os.IsNotExist(err) {
 		return nil, nil
 	} else if err != nil {
-		return nil, errors.Wrapf(err, "read layerchain file")
+		return nil, fmt.Errorf("Unable to read layerchain file - %s", err)
 	}
 
 	var layerChain []string
 	err = json.Unmarshal(content, &layerChain)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to unmarshal layerchain JSON")
+		return nil, fmt.Errorf("Failed to unmarshall layerchain json - %s", err)
 	}
 
 	return layerChain, nil
@@ -871,13 +875,13 @@ func (d *Driver) getLayerChain(id string) ([]string, error) {
 func (d *Driver) setLayerChain(id string, chain []string) error {
 	content, err := json.Marshal(&chain)
 	if err != nil {
-		return errors.Wrap(err, "failed to marshal layerchain JSON")
+		return fmt.Errorf("Failed to marshall layerchain json - %s", err)
 	}
 
 	jPath := filepath.Join(d.dir(id), "layerchain.json")
-	err = os.WriteFile(jPath, content, 0o600)
+	err = os.WriteFile(jPath, content, 0600)
 	if err != nil {
-		return errors.Wrap(err, "write layerchain file")
+		return fmt.Errorf("Unable to write layerchain file - %s", err)
 	}
 
 	return nil
@@ -898,16 +902,17 @@ func (fg *fileGetCloserWithBackupPrivileges) Get(filename string) (io.ReadCloser
 	// to the security descriptor. Also use sequential file access to avoid depleting the
 	// standby list - Microsoft VSO Bug Tracker #9900466
 	err := winio.RunWithPrivilege(winio.SeBackupPrivilege, func() error {
-		longPath := longpath.AddPrefix(filepath.Join(fg.path, filename))
-		p, err := windows.UTF16FromString(longPath)
+		path := longpath.AddPrefix(filepath.Join(fg.path, filename))
+		p, err := windows.UTF16FromString(path)
 		if err != nil {
 			return err
 		}
-		h, err := windows.CreateFile(&p[0], windows.GENERIC_READ, windows.FILE_SHARE_READ, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_SEQUENTIAL_SCAN, 0)
+		const fileFlagSequentialScan = 0x08000000 // FILE_FLAG_SEQUENTIAL_SCAN
+		h, err := windows.CreateFile(&p[0], windows.GENERIC_READ, windows.FILE_SHARE_READ, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS|fileFlagSequentialScan, 0)
 		if err != nil {
-			return &os.PathError{Op: "open", Path: longPath, Err: err}
+			return &os.PathError{Op: "open", Path: path, Err: err}
 		}
-		f = os.NewFile(uintptr(h), longPath)
+		f = os.NewFile(uintptr(h), path)
 		return nil
 	})
 	return f, err
@@ -929,12 +934,13 @@ func (d *Driver) DiffGetter(id string) (graphdriver.FileGetCloser, error) {
 }
 
 func parseStorageOpt(storageOpt map[string]string) (*storageOptions, error) {
-	options := &storageOptions{}
+	options := storageOptions{}
 
 	// Read size to change the block device size per container.
 	for key, val := range storageOpt {
-		// FIXME(thaJeztah): options should not be case-insensitive
-		if strings.EqualFold(key, "size") {
+		key := strings.ToLower(key)
+		switch key {
+		case "size":
 			size, err := units.RAMInBytes(val)
 			if err != nil {
 				return nil, err
@@ -942,5 +948,5 @@ func parseStorageOpt(storageOpt map[string]string) (*storageOptions, error) {
 			options.size = uint64(size)
 		}
 	}
-	return options, nil
+	return &options, nil
 }

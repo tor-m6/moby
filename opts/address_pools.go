@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"github.com/docker/docker/mystrings"
 
 	types "github.com/docker/docker/libnetwork/ipamutils"
 )
@@ -32,17 +31,19 @@ func (p *PoolsOpt) Set(value string) error {
 	poolsDef := types.NetworkToSplit{}
 
 	for _, field := range fields {
-		// TODO(thaJeztah): this should not be case-insensitive.
-		key, val, ok := mystrings.Cut(strings.ToLower(field), "=")
-		if !ok {
+		parts := strings.SplitN(field, "=", 2)
+		if len(parts) != 2 {
 			return fmt.Errorf("invalid field '%s' must be a key=value pair", field)
 		}
 
+		key := strings.ToLower(parts[0])
+		value := strings.ToLower(parts[1])
+
 		switch key {
 		case "base":
-			poolsDef.Base = val
+			poolsDef.Base = value
 		case "size":
-			size, err := strconv.Atoi(val)
+			size, err := strconv.Atoi(value)
 			if err != nil {
 				return fmt.Errorf("invalid size value: %q (must be integer): %v", value, err)
 			}

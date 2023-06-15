@@ -1,5 +1,5 @@
-//go:build linux || freebsd
-// +build linux freebsd
+//go:build linux || freebsd || inno
+// +build linux freebsd inno
 
 package daemon // import "github.com/docker/docker/daemon"
 
@@ -35,9 +35,9 @@ func (daemon *Daemon) reloadPlatform(conf *config.Config, attributes map[string]
 		daemon.configStore.ShmSize = conf.ShmSize
 	}
 
-	if conf.CgroupNamespaceMode != "" {
-		daemon.configStore.CgroupNamespaceMode = conf.CgroupNamespaceMode
-	}
+	// if conf.CgroupNamespaceMode != "" {
+	// 	daemon.configStore.CgroupNamespaceMode = conf.CgroupNamespaceMode
+	// }
 
 	if conf.IpcMode != "" {
 		daemon.configStore.IpcMode = conf.IpcMode
@@ -56,7 +56,7 @@ func (daemon *Daemon) reloadPlatform(conf *config.Config, attributes map[string]
 	attributes["default-runtime"] = daemon.configStore.DefaultRuntime
 	attributes["default-shm-size"] = strconv.FormatInt(int64(daemon.configStore.ShmSize), 10)
 	attributes["default-ipc-mode"] = daemon.configStore.IpcMode
-	attributes["default-cgroupns-mode"] = daemon.configStore.CgroupNamespaceMode
+	// attributes["default-cgroupns-mode"] = daemon.configStore.CgroupNamespaceMode
 
 	return nil
 }

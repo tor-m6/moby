@@ -1,3 +1,6 @@
+//go:build !inno
+// +build !inno
+
 package ioutils
 
 import "github.com/docker/docker/pkg/longpath"

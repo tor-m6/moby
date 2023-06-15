@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"syscall"
 
 	// "golang.org/x/sys/unix"
 )
@@ -119,14 +120,14 @@ func GetGroup() (io.ReadCloser, error) {
 // user cannot be found (or there is no /etc/passwd file on the filesystem),
 // then CurrentUser returns an error.
 func CurrentUser() (User, error) {
-	return LookupUid(os.Getuid())
+	return LookupUid(syscall.Getuid())
 }
 
 // CurrentGroup looks up the current user's group by their primary group id's
 // entry in /etc/passwd. If the group cannot be found (or there is no
 // /etc/group file on the filesystem), then CurrentGroup returns an error.
 func CurrentGroup() (Group, error) {
-	return LookupGid(os.Getgid())
+	return LookupGid(syscall.Getgid())
 }
 
 func currentUserSubIDs(fileName string) ([]SubID, error) {

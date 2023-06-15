@@ -1,5 +1,5 @@
-//go:build !linux && !darwin && !windows
-// +build !linux,!darwin,!windows
+//go:build !linux && !darwin && !windows && !inno
+// +build !linux,!darwin,!windows,!inno
 
 package cnmallocator
 

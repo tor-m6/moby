@@ -1,3 +1,6 @@
+//go:build linux
+// +build linux
+
 package overlay
 
 import (
@@ -6,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/hashicorp/serf/serf"
+	"github.com/sirupsen/logrus"
 )
 
 type ovNotify struct {
@@ -149,7 +152,7 @@ func (d *driver) resolvePeer(nid string, peerIP net.IP) (net.HardwareAddr, net.I
 		return nil, nil, nil, fmt.Errorf("could not resolve peer: serf instance not initialized")
 	}
 
-	qPayload := fmt.Sprintf("%s %s", string(nid), peerIP.String())
+	qPayload := fmt.Sprintf("%s %s", nid, peerIP.String())
 	resp, err := d.serfInstance.Query("peerlookup", []byte(qPayload), nil)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("resolving peer by querying the cluster failed: %v", err)
@@ -176,9 +179,7 @@ func (d *driver) resolvePeer(nid string, peerIP net.IP) (net.HardwareAddr, net.I
 	}
 }
 
-func (d *driver) startSerfLoop(eventCh chan serf.Event, notifyCh chan ovNotify,
-	exitCh chan chan struct{}) {
-
+func (d *driver) startSerfLoop(eventCh chan serf.Event, notifyCh chan ovNotify, exitCh chan chan struct{}) {
 	for {
 		select {
 		case notify, ok := <-notifyCh:

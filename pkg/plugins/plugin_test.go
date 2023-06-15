@@ -123,7 +123,7 @@ func TestPluginWithNoManifest(t *testing.T) {
 }
 
 func TestGetAll(t *testing.T) {
-	tmpdir, unregister, r := Setup(t)
+	tmpdir, unregister := Setup(t)
 	defer unregister()
 
 	p := filepath.Join(tmpdir, "example.json")
@@ -136,6 +136,7 @@ func TestGetAll(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	r := newLocalRegistry()
 	plugin, err := r.Plugin("example")
 	if err != nil {
 		t.Fatal(err)
@@ -143,7 +144,7 @@ func TestGetAll(t *testing.T) {
 	plugin.Manifest = &Manifest{Implements: []string{"apple"}}
 	storage.plugins["example"] = plugin
 
-	fetchedPlugins, err := r.GetAll("apple")
+	fetchedPlugins, err := GetAll("apple")
 	if err != nil {
 		t.Fatal(err)
 	}

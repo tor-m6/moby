@@ -4,8 +4,8 @@ import (
 	"os"
 	"testing"
 
+	"github.com/docker/docker/libnetwork/datastore"
 	"github.com/docker/libkv/store"
-	"github.com/docker/libnetwork/datastore"
 )
 
 func TestBoltdbBackend(t *testing.T) {
@@ -14,7 +14,6 @@ func TestBoltdbBackend(t *testing.T) {
 	defer os.Remove("/tmp/boltdb.db")
 	config := &store.Config{Bucket: "testBackend"}
 	testLocalBackend(t, "boltdb", "/tmp/boltdb.db", config)
-
 }
 
 func TestNoPersist(t *testing.T) {
@@ -35,10 +34,10 @@ func TestNoPersist(t *testing.T) {
 		t.Fatalf("Error creating endpoint: %v", err)
 	}
 	store := ctrl.(*controller).getStore(datastore.LocalScope).KVStore()
-	if exists, _ := store.Exists(datastore.Key(datastore.NetworkKeyPrefix, string(nw.ID()))); exists {
+	if exists, _ := store.Exists(datastore.Key(datastore.NetworkKeyPrefix, nw.ID())); exists {
 		t.Fatalf("Network with persist=false should not be stored in KV Store")
 	}
-	if exists, _ := store.Exists(datastore.Key([]string{datastore.EndpointKeyPrefix, string(nw.ID()), string(ep.ID())}...)); exists {
+	if exists, _ := store.Exists(datastore.Key([]string{datastore.EndpointKeyPrefix, nw.ID(), ep.ID()}...)); exists {
 		t.Fatalf("Endpoint in Network with persist=false should not be stored in KV Store")
 	}
 	store.Close()

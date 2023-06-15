@@ -15,10 +15,10 @@ func (daemon *Daemon) getLibcontainerdCreateOptions(container *container.Contain
 		container.CheckpointTo(daemon.containersReplica)
 	}
 
-	binary, opts, err := daemon.getRuntime(container.HostConfig.Runtime)
+	rt, err := daemon.getRuntime(container.HostConfig.Runtime)
 	if err != nil {
-		return "", nil, setExitCodeFromError(container.SetExitCode, err)
+		return "", nil, translateContainerdStartErr(container.Path, container.SetExitCode, err)
 	}
 
-	return binary, opts, nil
+	return rt.Shim.Binary, rt.Shim.Opts, nil
 }

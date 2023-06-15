@@ -1,6 +1,9 @@
+//go:build linux
+// +build linux
+
 package overlay
 
-//go:generate protoc -I.:../../Godeps/_workspace/src/github.com/gogo/protobuf  --gogo_out=import_path=github.com/docker/libnetwork/drivers/overlay,Mgogoproto/gogo.proto=github.com/gogo/protobuf/gogoproto:. overlay.proto
+//go:generate protoc -I.:../../Godeps/_workspace/src/github.com/gogo/protobuf  --gogo_out=import_path=github.com/docker/docker/libnetwork/drivers/overlay,Mgogoproto/gogo.proto=github.com/gogo/protobuf/gogoproto:. overlay.proto
 
 import (
 	"context"
@@ -8,15 +11,15 @@ import (
 	"net"
 	"sync"
 
-	"github.com/Sirupsen/logrus"
-	"github.com/docker/libnetwork/datastore"
-	"github.com/docker/libnetwork/discoverapi"
-	"github.com/docker/libnetwork/driverapi"
-	"github.com/docker/libnetwork/idm"
-	"github.com/docker/libnetwork/netlabel"
-	"github.com/docker/libnetwork/osl"
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/datastore"
+	"github.com/docker/docker/libnetwork/discoverapi"
+	"github.com/docker/docker/libnetwork/driverapi"
+	"github.com/docker/docker/libnetwork/idm"
+	"github.com/docker/docker/libnetwork/netlabel"
+	"github.com/docker/docker/libnetwork/osl"
+	"github.com/docker/docker/libnetwork/types"
 	"github.com/hashicorp/serf/serf"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -25,7 +28,6 @@ const (
 	vethLen      = 7
 	vxlanIDStart = 256
 	vxlanIDEnd   = (1 << 24) - 1
-	vxlanPort    = 4789
 	vxlanEncap   = 50
 	secureOption = "encrypted"
 )
@@ -105,17 +107,6 @@ func Init(dc driverapi.DriverCallback, config map[string]interface{}) error {
 		logrus.Warnf("Failure during overlay endpoints restore: %v", err)
 	}
 
-	// If an error happened when the network join the sandbox during the endpoints restore
-	// we should reset it now along with the once variable, so that subsequent endpoint joins
-	// outside of the restore path can potentially fix the network join and succeed.
-	for nid, n := range d.networks {
-		if n.initErr != nil {
-			logrus.Infof("resetting init error and once variable for network %s after unsuccessful endpoint restore: %v", nid, n.initErr)
-			n.initErr = nil
-			n.once = &sync.Once{}
-		}
-	}
-
 	return dc.RegisterDriver(networkType, d, c)
 }
 
@@ -137,10 +128,10 @@ func (d *driver) restoreEndpoints() error {
 		ep := kvo.(*endpoint)
 		n := d.network(ep.nid)
 		if n == nil {
-			logrus.Debugf("Network (%s) not found for restored endpoint (%s)", ep.nid[0:7], ep.id[0:7])
-			logrus.Debugf("Deleting stale overlay endpoint (%s) from store", ep.id[0:7])
+			logrus.Debugf("Network (%.7s) not found for restored endpoint (%.7s)", ep.nid, ep.id)
+			logrus.Debugf("Deleting stale overlay endpoint (%.7s) from store", ep.id)
 			if err := d.deleteEndpointFromStore(ep); err != nil {
-				logrus.Debugf("Failed to delete stale overlay endpoint (%s) from store", ep.id[0:7])
+				logrus.Debugf("Failed to delete stale overlay endpoint (%.7s) from store", ep.id)
 			}
 			continue
 		}
@@ -151,12 +142,8 @@ func (d *driver) restoreEndpoints() error {
 			return fmt.Errorf("could not find subnet for endpoint %s", ep.id)
 		}
 
-		if err := n.joinSandbox(true); err != nil {
+		if err := n.joinSandbox(s, true, true); err != nil {
 			return fmt.Errorf("restore network sandbox failed: %v", err)
-		}
-
-		if err := n.joinSubnetSandbox(s, true); err != nil {
-			return fmt.Errorf("restore subnet sandbox failed for %q: %v", s.subnetIP.String(), err)
 		}
 
 		Ifaces := make(map[string][]osl.IfaceOption)
@@ -166,10 +153,10 @@ func (d *driver) restoreEndpoints() error {
 
 		err := n.sbox.Restore(Ifaces, nil, nil, nil)
 		if err != nil {
+			n.leaveSandbox()
 			return fmt.Errorf("failed to restore overlay sandbox: %v", err)
 		}
 
-		n.incEndpointCount()
 		d.peerAdd(ep.nid, ep.id, ep.addr.IP, ep.addr.Mask, ep.mac, net.ParseIP(d.advertiseAddress), false, false, true)
 	}
 	return nil
@@ -194,7 +181,6 @@ func Fini(drv driverapi.Driver) {
 }
 
 func (d *driver) configure() error {
-
 	// Apply OS specific kernel configs if needed
 	d.initOS.Do(applyOStweaks)
 
@@ -394,7 +380,7 @@ func (d *driver) DiscoverNew(dType discoverapi.DiscoveryType, data interface{}) 
 			}
 		}
 		if err := d.updateKeys(newKey, priKey, delKey); err != nil {
-			logrus.Warn(err)
+			return err
 		}
 	default:
 	}

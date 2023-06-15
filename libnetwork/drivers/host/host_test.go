@@ -3,8 +3,7 @@ package host
 import (
 	"testing"
 
-	_ "github.com/docker/libnetwork/testutils"
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/types"
 )
 
 func TestDriver(t *testing.T) {

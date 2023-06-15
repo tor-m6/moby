@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sync"
@@ -63,9 +62,6 @@ func NewStoreFromOptions(options StoreOptions) (Store, error) {
 		ExperimentalEnabled: options.ExperimentalEnabled,
 	})
 	if err != nil {
-		if options.GraphDriver != "" {
-			return nil, fmt.Errorf("error initializing graphdriver: %v: %s", err, options.GraphDriver)
-		}
 		return nil, fmt.Errorf("error initializing graphdriver: %v", err)
 	}
 	logrus.Debugf("Initialized graph driver %s", driver)
@@ -251,7 +247,7 @@ func (ls *layerStore) applyTar(tx *fileMetadataTransaction, ts io.Reader, parent
 	// discard trailing data but ensure metadata is picked up to reconstruct stream
 	// unconditionally call io.Copy here before checking err to ensure the resources
 	// allocated by NewInputTarStream above are always released
-	io.Copy(ioutil.Discard, rdr) // ignore error as reader may be closed
+	io.Copy(io.Discard, rdr) // ignore error as reader may be closed
 	if err != nil {
 		return err
 	}
@@ -269,10 +265,10 @@ func (ls *layerStore) Register(ts io.Reader, parent ChainID) (Layer, error) {
 }
 
 func (ls *layerStore) registerWithDescriptor(ts io.Reader, parent ChainID, descriptor distribution.Descriptor) (Layer, error) {
-	// cErr is used to hold the error which will always trigger
+	// err is used to hold the error which will always trigger
 	// cleanup of creates sources but may not be an error returned
 	// to the caller (already exists).
-	var cErr error
+	var err error
 	var pid string
 	var p *roLayer
 
@@ -286,15 +282,15 @@ func (ls *layerStore) registerWithDescriptor(ts io.Reader, parent ChainID, descr
 		pid = p.cacheID
 		// Release parent chain if error
 		defer func() {
-			if cErr != nil {
+			if err != nil {
 				ls.layerL.Lock()
 				ls.releaseLayer(p)
 				ls.layerL.Unlock()
 			}
 		}()
 		if p.depth() >= maxLayerDepth {
-			cErr = ErrMaxDepthExceeded
-			return nil, cErr
+			err = ErrMaxDepthExceeded
+			return nil, err
 		}
 	}
 
@@ -308,18 +304,18 @@ func (ls *layerStore) registerWithDescriptor(ts io.Reader, parent ChainID, descr
 		descriptor:     descriptor,
 	}
 
-	if cErr = ls.driver.Create(layer.cacheID, pid, nil); cErr != nil {
-		return nil, cErr
+	if err = ls.driver.Create(layer.cacheID, pid, nil); err != nil {
+		return nil, err
 	}
 
-	tx, cErr := ls.store.StartTransaction()
-	if cErr != nil {
-		return nil, cErr
+	tx, err := ls.store.StartTransaction()
+	if err != nil {
+		return nil, err
 	}
 
 	defer func() {
-		if cErr != nil {
-			logrus.Debugf("Cleaning up layer %s: %v", layer.cacheID, cErr)
+		if err != nil {
+			logrus.Debugf("Cleaning up layer %s: %v", layer.cacheID, err)
 			if err := ls.driver.Remove(layer.cacheID); err != nil {
 				logrus.Errorf("Error cleaning up cache layer %s: %v", layer.cacheID, err)
 			}
@@ -329,8 +325,8 @@ func (ls *layerStore) registerWithDescriptor(ts io.Reader, parent ChainID, descr
 		}
 	}()
 
-	if cErr = ls.applyTar(tx, ts, pid, layer); cErr != nil {
-		return nil, cErr
+	if err = ls.applyTar(tx, ts, pid, layer); err != nil {
+		return nil, err
 	}
 
 	if layer.parent == nil {
@@ -339,8 +335,8 @@ func (ls *layerStore) registerWithDescriptor(ts io.Reader, parent ChainID, descr
 		layer.chainID = createChainIDFromParent(layer.parent.chainID, layer.diffID)
 	}
 
-	if cErr = storeLayer(tx, layer); cErr != nil {
-		return nil, cErr
+	if err = storeLayer(tx, layer); err != nil {
+		return nil, err
 	}
 
 	ls.layerL.Lock()
@@ -348,12 +344,12 @@ func (ls *layerStore) registerWithDescriptor(ts io.Reader, parent ChainID, descr
 
 	if existingLayer := ls.get(layer.chainID); existingLayer != nil {
 		// Set error for cleanup, but do not return the error
-		cErr = errors.New("layer already exists")
+		err = errors.New("layer already exists")
 		return existingLayer.getReference(), nil
 	}
 
-	if cErr = tx.Commit(layer.chainID); cErr != nil {
-		return nil, cErr
+	if err = tx.Commit(layer.chainID); err != nil {
+		return nil, err
 	}
 
 	ls.layerMap[layer.chainID] = layer
@@ -401,7 +397,7 @@ func (ls *layerStore) deleteLayer(layer *roLayer, metadata *Metadata) error {
 	var dir string
 	for {
 		dgst := digest.Digest(layer.chainID)
-		tmpID := fmt.Sprintf("%s-%s-removing", dgst.Encoded(), stringid.GenerateRandomID())
+		tmpID := fmt.Sprintf("%s-%s-removing", dgst.Hex(), stringid.GenerateRandomID())
 		dir = filepath.Join(ls.store.root, string(dgst.Algorithm()), tmpID)
 		err := os.Rename(ls.store.getLayerDirectory(layer.chainID), dir)
 		if os.IsExist(err) {

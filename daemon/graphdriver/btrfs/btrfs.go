@@ -5,17 +5,9 @@ package btrfs // import "github.com/docker/docker/daemon/graphdriver/btrfs"
 
 /*
 #include <stdlib.h>
-#include <stdio.h>
 #include <dirent.h>
-
-#include <linux/version.h>
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4,12,0)
-    #error "Headers from kernel >= 4.12 are required to build with Btrfs support."
-    #error "HINT: Set 'DOCKER_BUILDTAGS=exclude_graphdriver_btrfs' to build without Btrfs."
-#endif
-
-#include <linux/btrfs.h>
-#include <linux/btrfs_tree.h>
+#include <btrfs/ioctl.h>
+#include <btrfs/ctree.h>
 
 static void set_name_btrfs_ioctl_vol_args_v2(struct btrfs_ioctl_vol_args_v2* btrfs_struct, const char* value) {
     snprintf(btrfs_struct->name, BTRFS_SUBVOL_NAME_MAX, "%s", value);
@@ -155,11 +147,18 @@ func (d *Driver) String() string {
 	return "btrfs"
 }
 
-// Status returns the status of the driver.
+// Status returns current driver information in a two dimensional string array.
+// Output contains "Build Version" and "Library Version" of the btrfs libraries used.
+// Version information can be used to check compatibility with your kernel.
 func (d *Driver) Status() [][2]string {
-	return [][2]string{
-		{"Btrfs", ""},
+	status := [][2]string{}
+	if bv := btrfsBuildVersion(); bv != "-" {
+		status = append(status, [2]string{"Build Version", bv})
 	}
+	if lv := btrfsLibVersion(); lv != -1 {
+		status = append(status, [2]string{"Library Version", strconv.Itoa(lv)})
+	}
+	return status
 }
 
 // GetMetadata returns empty metadata for this driver.
@@ -239,7 +238,7 @@ func subvolSnapshot(src, dest, name string) error {
 
 	var cs = C.CString(name)
 	C.set_name_btrfs_ioctl_vol_args_v2(&args, cs)
-	free(cs)
+	C.free(unsafe.Pointer(cs))
 
 	_, _, errno := unix.Syscall(unix.SYS_IOCTL, getDirFd(destDir), C.BTRFS_IOC_SNAP_CREATE_V2,
 		uintptr(unsafe.Pointer(&args)))
@@ -396,7 +395,7 @@ func subvolLimitQgroup(path string, size uint64) error {
 	defer closeDir(dir)
 
 	var args C.struct_btrfs_ioctl_qgroup_limit_args
-	args.lim.max_rfer = C.__u64(size)
+	args.lim.max_referenced = C.__u64(size)
 	args.lim.flags = C.BTRFS_QGROUP_LIMIT_MAX_RFER
 	_, _, errno := unix.Syscall(unix.SYS_IOCTL, getDirFd(dir), C.BTRFS_IOC_QGROUP_LIMIT,
 		uintptr(unsafe.Pointer(&args)))

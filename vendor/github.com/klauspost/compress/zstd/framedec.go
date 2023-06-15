@@ -343,7 +343,7 @@ func (d *frameDec) consumeCRC() error {
 	return nil
 }
 
-// runDecoder will run the decoder for the remainder of the frame.
+// runDecoder will create a sync decoder that will decode a block of data.
 func (d *frameDec) runDecoder(dst []byte, dec *blockDec) ([]byte, error) {
 	saved := d.history.b
 
@@ -353,23 +353,12 @@ func (d *frameDec) runDecoder(dst []byte, dec *blockDec) ([]byte, error) {
 	// Store input length, so we only check new data.
 	crcStart := len(dst)
 	d.history.decoders.maxSyncLen = 0
-	if d.o.limitToCap {
-		d.history.decoders.maxSyncLen = uint64(cap(dst) - len(dst))
-	}
 	if d.FrameContentSize != fcsUnknown {
-		if !d.o.limitToCap || d.FrameContentSize+uint64(len(dst)) < d.history.decoders.maxSyncLen {
-			d.history.decoders.maxSyncLen = d.FrameContentSize + uint64(len(dst))
-		}
+		d.history.decoders.maxSyncLen = d.FrameContentSize + uint64(len(dst))
 		if d.history.decoders.maxSyncLen > d.o.maxDecodedSize {
-			if debugDecoder {
-				println("maxSyncLen:", d.history.decoders.maxSyncLen, "> maxDecodedSize:", d.o.maxDecodedSize)
-			}
 			return dst, ErrDecoderSizeExceeded
 		}
-		if debugDecoder {
-			println("maxSyncLen:", d.history.decoders.maxSyncLen)
-		}
-		if !d.o.limitToCap && uint64(cap(dst)) < d.history.decoders.maxSyncLen {
+		if uint64(cap(dst)) < d.history.decoders.maxSyncLen {
 			// Alloc for output
 			dst2 := make([]byte, len(dst), d.history.decoders.maxSyncLen+compressedBlockOverAlloc)
 			copy(dst2, dst)
@@ -389,13 +378,7 @@ func (d *frameDec) runDecoder(dst []byte, dec *blockDec) ([]byte, error) {
 		if err != nil {
 			break
 		}
-		if uint64(len(d.history.b)-crcStart) > d.o.maxDecodedSize {
-			println("runDecoder: maxDecodedSize exceeded", uint64(len(d.history.b)-crcStart), ">", d.o.maxDecodedSize)
-			err = ErrDecoderSizeExceeded
-			break
-		}
-		if d.o.limitToCap && len(d.history.b) > cap(dst) {
-			println("runDecoder: cap exceeded", uint64(len(d.history.b)), ">", cap(dst))
+		if uint64(len(d.history.b)) > d.o.maxDecodedSize {
 			err = ErrDecoderSizeExceeded
 			break
 		}

@@ -40,27 +40,6 @@ function net_disconnect() {
 	dnet_cmd $(inst_id2port ${1}) service unpublish ${2}.${3}
 }
 
-function start_consul() {
-    stop_consul
-    docker run -d \
-	   --name=pr_consul \
-	   -p 8500:8500 \
-	   -p 8300-8302:8300-8302/tcp \
-	   -p 8300-8302:8300-8302/udp \
-	   -h consul \
-	   progrium/consul -server -bootstrap
-    sleep 2
-}
-
-function stop_consul() {
-    echo "consul started"
-    docker stop pr_consul || true
-    # You cannot destroy a container in Circle CI. So do not attempt destroy in circleci
-    if [ -z "$CIRCLECI" ]; then
-	docker rm -f pr_consul || true
-    fi
-}
-
 hrun() {
     local e E T oldIFS
     [[ ! "$-" =~ e ]] || e=1
@@ -153,13 +132,6 @@ function start_dnet() {
     # Try discovery URLs with or without path
     neigh_ip=""
     neighbors=""
-    if [ "$store" = "zookeeper" ]; then
-	read discovery provider address < <(parse_discovery_str zk://${bridge_ip}:2182)
-    elif [ "$store" = "etcd" ]; then
-	read discovery provider address < <(parse_discovery_str etcd://${bridge_ip}:42000/custom_prefix)
-    elif [ "$store" = "consul" ]; then
-	read discovery provider address < <(parse_discovery_str consul://${bridge_ip}:8500/custom_prefix)
-    else
 	if [ "$nip" != "" ]; then
 	    neighbors=${nip}
 	fi
@@ -167,7 +139,6 @@ function start_dnet() {
 	discovery=""
 	provider=""
 	address=""
-    fi
 
     if [ "$discovery" != "" ]; then
 	cat > ${tomlfile} <<EOF
@@ -228,22 +199,12 @@ function start_ovrouter() {
 	   mrjana/golang ./cmd/ovrouter/ovrouter eth0
 }
 
-function skip_for_circleci() {
-    if [ -n "$CIRCLECI" ]; then
-	skip
-    fi
-}
-
 function stop_dnet() {
     local name
 
     name=$(dnet_container_name $1 $2)
     rm -rf /tmp/dnet/${name} || true
-    docker stop ${name} || true
-    # You cannot destroy a container in Circle CI. So do not attempt destroy in circleci
-    if [ -z "$CIRCLECI" ]; then
-	docker rm -f ${name} || true
-    fi
+    docker rm -f ${name} || true
 }
 
 function dnet_cmd() {
@@ -285,46 +246,6 @@ function runc_nofail() {
     dnet_exec ${dnet} "umount /var/run/netns/c && rm /var/run/netns/c"
 }
 
-function start_etcd() {
-    local bridge_ip
-    stop_etcd
-
-    bridge_ip=$(get_docker_bridge_ip)
-    docker run -d \
-	   --net=host \
-	   --name=dn_etcd \
-	   mrjana/etcd --listen-client-urls http://0.0.0.0:42000 \
-	   --advertise-client-urls http://${bridge_ip}:42000
-    sleep 2
-}
-
-function stop_etcd() {
-    docker stop dn_etcd || true
-    # You cannot destroy a container in Circle CI. So do not attempt destroy in circleci
-    if [ -z "$CIRCLECI" ]; then
-	docker rm -f dn_etcd || true
-    fi
-}
-
-function start_zookeeper() {
-    stop_zookeeper
-    docker run -d \
-	   --name=zookeeper_server \
-	   -p 2182:2181 \
-	   -h zookeeper \
-	   dnephin/docker-zookeeper:3.4.6
-    sleep 2
-}
-
-function stop_zookeeper() {
-    echo "zookeeper started"
-    docker stop zookeeper_server || true
-    # You cannot destroy a container in Circle CI. So do not attempt destroy in circleci
-    if [ -z "$CIRCLECI" ]; then
-	docker rm -f zookeeper_server || true
-    fi
-}
-
 function test_overlay() {
     dnet_suffix=$1
 
@@ -332,7 +253,7 @@ function test_overlay() {
 
     start=1
     end=3
-    # Setup overlay network and connect containers ot it
+    # Setup overlay network and connect containers to it
     if [ -z "${2}" -o "${2}" != "skip_add" ]; then
 	if [ -z "${2}" -o "${2}" != "internal" ]; then
 	    dnet_cmd $(inst_id2port 1) network create -d overlay multihost
@@ -367,7 +288,7 @@ function test_overlay() {
 	done
     done
 
-    # Setup bridge network and connect containers ot it
+    # Setup bridge network and connect containers to it
     if [ -z "${2}" -o "${2}" != "skip_add" ]; then
 	if [ -z "${2}" -o "${2}" != "internal" ]; then
 	    dnet_cmd $(inst_id2port 1) network create -d bridge br1
@@ -445,7 +366,7 @@ function test_overlay_singlehost() {
 
     start=1
     end=3
-    # Setup overlay network and connect containers ot it
+    # Setup overlay network and connect containers to it
     dnet_cmd $(inst_id2port 1) network create -d overlay multihost
     for i in `seq ${start} ${end}`;
     do
@@ -484,7 +405,7 @@ function test_overlay_hostmode() {
 
     start=1
     end=2
-    # Setup overlay network and connect containers ot it
+    # Setup overlay network and connect containers to it
     dnet_cmd $(inst_id2port 1) network create -d overlay multihost1
     dnet_cmd $(inst_id2port 1) network create -d overlay multihost2
     dnet_cmd $(inst_id2port 1) network ls

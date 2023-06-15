@@ -1,3 +1,6 @@
+//go:build linux
+// +build linux
+
 package iptables
 
 import (
@@ -5,7 +8,7 @@ import (
 	"net"
 	"syscall"
 
-	"github.com/Sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 )
 
@@ -54,6 +57,8 @@ func purgeConntrackState(nlh *netlink.Handle, family netlink.InetFamily, ipAddre
 	filter := &netlink.ConntrackFilter{}
 	// NOTE: doing the flush using the ipAddress is safe because today there cannot be multiple networks with the same subnet
 	// so it will not be possible to flush flows that are of other containers
-	filter.AddIP(netlink.ConntrackNatAnyIP, ipAddress)
+	if err := filter.AddIP(netlink.ConntrackNatAnyIP, ipAddress); err != nil {
+		return 0, err
+	}
 	return nlh.ConntrackDeleteFilter(netlink.ConntrackTable, family, filter)
 }

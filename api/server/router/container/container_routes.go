@@ -48,14 +48,10 @@ func (s *containerRouter) postCommit(ctx context.Context, w http.ResponseWriter,
 		return err
 	}
 
-	ref, err := httputils.RepoTagReference(r.Form.Get("repo"), r.Form.Get("tag"))
-	if err != nil {
-		return errdefs.InvalidParameter(err)
-	}
-
 	commitCfg := &backend.CreateImageConfig{
 		Pause:   pause,
-		Tag:     ref,
+		Repo:    r.Form.Get("repo"),
+		Tag:     r.Form.Get("tag"),
 		Author:  r.Form.Get("author"),
 		Comment: r.Form.Get("comment"),
 		Config:  config,
@@ -174,7 +170,7 @@ func (s *containerRouter) getContainersLogs(ctx context.Context, w http.Response
 }
 
 func (s *containerRouter) getContainersExport(ctx context.Context, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
-	return s.backend.ContainerExport(ctx, vars["name"], w)
+	return s.backend.ContainerExport(vars["name"], w)
 }
 
 type bodyOnStartError struct{}
@@ -561,11 +557,6 @@ func (s *containerRouter) postContainersCreate(ctx context.Context, w http.Respo
 	if hostConfig != nil && runtime.GOOS == "linux" && versions.LessThan(version, "1.42") {
 		// ConsoleSize is not respected by Linux daemon before API 1.42
 		hostConfig.ConsoleSize = [2]uint{0, 0}
-	}
-
-	if hostConfig != nil && versions.LessThan(version, "1.43") {
-		// Ignore Annotations because it was added in API v1.43.
-		hostConfig.Annotations = nil
 	}
 
 	var platform *specs.Platform

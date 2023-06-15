@@ -93,17 +93,17 @@ func (e *localExporterInstance) Export(ctx context.Context, inp exporter.Source,
 			walkOpt := &fsutil.WalkOpt{}
 
 			if idmap != nil {
-				walkOpt.Map = func(p string, st *fstypes.Stat) fsutil.MapResult {
+				walkOpt.Map = func(p string, st *fstypes.Stat) bool {
 					uid, gid, err := idmap.ToContainer(idtools.Identity{
 						UID: int(st.Uid),
 						GID: int(st.Gid),
 					})
 					if err != nil {
-						return 0
+						return false
 					}
 					st.Uid = uint32(uid)
 					st.Gid = uint32(gid)
-					return 1
+					return true
 				}
 			}
 

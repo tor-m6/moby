@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/Sirupsen/logrus"
-	"github.com/docker/libnetwork/driverapi"
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/driverapi"
+	"github.com/docker/docker/libnetwork/types"
 	"github.com/gogo/protobuf/proto"
+	"github.com/sirupsen/logrus"
 )
 
 // Join method is invoked when a Sandbox is attached to an endpoint.
@@ -39,6 +39,11 @@ func (d *driver) Join(nid, eid string, sboxKey string, jinfo driverapi.JoinInfo,
 	if err := jinfo.AddTableEntry(ovPeerTable, eid, buf); err != nil {
 		logrus.Errorf("overlay: Failed adding table entry to joininfo: %v", err)
 	}
+
+	if ep.disablegateway {
+		jinfo.DisableGatewayService()
+	}
+
 	return nil
 }
 
@@ -90,7 +95,10 @@ func (d *driver) EventNotify(etype driverapi.EventType, nid, tableName, key stri
 		return
 	}
 
-	d.peerAdd(nid, eid, addr.IP, addr.Mask, mac, vtep, true)
+	err = d.peerAdd(nid, eid, addr.IP, addr.Mask, mac, vtep, true)
+	if err != nil {
+		logrus.Errorf("peerAdd failed (%v) for ip %s with mac %s", err, addr.IP.String(), mac.String())
+	}
 }
 
 func (d *driver) DecodeTableEntry(tablename string, key string, value []byte) (string, map[string]string) {

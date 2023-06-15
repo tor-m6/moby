@@ -98,16 +98,7 @@ func getContentStore(ctx context.Context, sm *session.Manager, g session.Group, 
 	if err != nil {
 		return nil, err
 	}
-	return &unlazyProvider{sessioncontent.NewCallerStore(caller, storeID), g}, nil
-}
-
-type unlazyProvider struct {
-	content.Store
-	s session.Group
-}
-
-func (p *unlazyProvider) UnlazySession(desc ocispecs.Descriptor) session.Group {
-	return p.s
+	return sessioncontent.NewCallerStore(caller, storeID), nil
 }
 
 func attrsToCompression(attrs map[string]string) (*compression.Config, error) {

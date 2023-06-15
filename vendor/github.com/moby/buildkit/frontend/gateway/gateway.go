@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"os"
 	"path/filepath"
@@ -15,7 +14,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/docker/docker/myos"
 	"github.com/containerd/containerd/mount"
 	"github.com/docker/distribution/reference"
 	"github.com/docker/docker/pkg/idtools"
@@ -302,12 +300,12 @@ func metadataMount(def *opspb.Definition) (*executor.Mount, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	dir, err := myos.MkdirTemp("", "buildkit-metadata")
+	dir, err := os.MkdirTemp("", "buildkit-metadata")
 	if err != nil {
 		return nil, nil, err
 	}
 
-	if err := ioutil.WriteFile(filepath.Join(dir, "frontend.bin"), dt, 0400); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "frontend.bin"), dt, 0400); err != nil {
 		return nil, nil, err
 	}
 

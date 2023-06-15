@@ -2,49 +2,33 @@ package containerd
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/containerd/containerd"
-	"github.com/containerd/containerd/content"
 	"github.com/containerd/containerd/plugin"
-	"github.com/containerd/containerd/remotes/docker"
 	"github.com/containerd/containerd/snapshots"
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/container"
 	"github.com/docker/docker/daemon/images"
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/layer"
-	"github.com/opencontainers/go-digest"
-	"github.com/opencontainers/image-spec/identity"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
+	"golang.org/x/sync/singleflight"
 )
 
 // ImageService implements daemon.ImageService
 type ImageService struct {
-	client          *containerd.Client
-	containers      container.Store
-	snapshotter     string
-	registryHosts   RegistryHostsProvider
-	registryService RegistryConfigProvider
-}
-
-type RegistryHostsProvider interface {
-	RegistryHosts() docker.RegistryHosts
-}
-
-type RegistryConfigProvider interface {
-	IsInsecureRegistry(host string) bool
+	client      *containerd.Client
+	snapshotter string
+	usage       singleflight.Group
 }
 
 // NewService creates a new ImageService.
-func NewService(c *containerd.Client, containers container.Store, snapshotter string, hostsProvider RegistryHostsProvider, registry RegistryConfigProvider) *ImageService {
+func NewService(c *containerd.Client, snapshotter string) *ImageService {
 	return &ImageService{
-		client:          c,
-		containers:      containers,
-		snapshotter:     snapshotter,
-		registryHosts:   hostsProvider,
-		registryService: registry,
+		client:      c,
+		snapshotter: snapshotter,
 	}
 }
 
@@ -76,6 +60,12 @@ func (i *ImageService) Children(id image.ID) []image.ID {
 // TODO: accept an opt struct instead of container?
 func (i *ImageService) CreateLayer(container *container.Container, initFunc layer.MountInit) (layer.RWLayer, error) {
 	return nil, errdefs.NotImplemented(errdefs.NotImplemented(errors.New("not implemented")))
+}
+
+// GetLayerByID returns a layer by ID
+// called from daemon.go Daemon.restore(), and Daemon.containerExport().
+func (i *ImageService) GetLayerByID(cid string) (layer.RWLayer, error) {
+	return nil, errdefs.NotImplemented(errors.New("not implemented"))
 }
 
 // LayerStoreStatus returns the status for each layer store
@@ -115,17 +105,53 @@ func (i *ImageService) ReleaseLayer(rwlayer layer.RWLayer) error {
 // LayerDiskUsage returns the number of bytes used by layer stores
 // called from disk_usage.go
 func (i *ImageService) LayerDiskUsage(ctx context.Context) (int64, error) {
-	var allLayersSize int64
-	snapshotter := i.client.SnapshotService(i.snapshotter)
-	snapshotter.Walk(ctx, func(ctx context.Context, info snapshots.Info) error {
-		usage, err := snapshotter.Usage(ctx, info.Name)
-		if err != nil {
-			return err
-		}
-		allLayersSize += usage.Size
-		return nil
+	ch := i.usage.DoChan("LayerDiskUsage", func() (interface{}, error) {
+		var allLayersSize int64
+		snapshotter := i.client.SnapshotService(i.snapshotter)
+		snapshotter.Walk(ctx, func(ctx context.Context, info snapshots.Info) error {
+			usage, err := snapshotter.Usage(ctx, info.Name)
+			if err != nil {
+				return err
+			}
+			allLayersSize += usage.Size
+			return nil
+		})
+		return allLayersSize, nil
 	})
-	return allLayersSize, nil
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	case res := <-ch:
+		if res.Err != nil {
+			return 0, res.Err
+		}
+		return res.Val.(int64), nil
+	}
+}
+
+// ImageDiskUsage returns information about image data disk usage.
+func (i *ImageService) ImageDiskUsage(ctx context.Context) ([]*types.ImageSummary, error) {
+	ch := i.usage.DoChan("ImageDiskUsage", func() (interface{}, error) {
+		// Get all top images with extra attributes
+		imgs, err := i.Images(ctx, types.ImageListOptions{
+			Filters:        filters.NewArgs(),
+			SharedSize:     true,
+			ContainerCount: true,
+		})
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to retrieve image list")
+		}
+		return imgs, nil
+	})
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case res := <-ch:
+		if res.Err != nil {
+			return nil, res.Err
+		}
+		return res.Val.([]*types.ImageSummary), nil
+	}
 }
 
 // UpdateConfig values
@@ -141,56 +167,6 @@ func (i *ImageService) GetLayerFolders(img *image.Image, rwLayer layer.RWLayer) 
 }
 
 // GetContainerLayerSize returns the real size & virtual size of the container.
-func (i *ImageService) GetContainerLayerSize(ctx context.Context, containerID string) (int64, int64, error) {
-	ctr := i.containers.Get(containerID)
-	if ctr == nil {
-		return 0, 0, nil
-	}
-	cs := i.client.ContentStore()
-
-	imageManifestBytes, err := content.ReadBlob(ctx, cs, *ctr.ImageManifest)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	var manifest ocispec.Manifest
-	if err := json.Unmarshal(imageManifestBytes, &manifest); err != nil {
-		return 0, 0, err
-	}
-
-	imageConfigBytes, err := content.ReadBlob(ctx, cs, manifest.Config)
-	if err != nil {
-		return 0, 0, err
-	}
-	var img ocispec.Image
-	if err := json.Unmarshal(imageConfigBytes, &img); err != nil {
-		return 0, 0, err
-	}
-
-	snapshotter := i.client.SnapshotService(i.snapshotter)
-	usage, err := snapshotter.Usage(ctx, containerID)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	sizeCache := make(map[digest.Digest]int64)
-	snapshotSizeFn := func(d digest.Digest) (int64, error) {
-		if s, ok := sizeCache[d]; ok {
-			return s, nil
-		}
-		u, err := snapshotter.Usage(ctx, d.String())
-		if err != nil {
-			return 0, err
-		}
-		sizeCache[d] = u.Size
-		return u.Size, nil
-	}
-
-	chainIDs := identity.ChainIDs(img.RootFS.DiffIDs)
-	virtualSize, err := computeVirtualSize(chainIDs, snapshotSizeFn)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	return usage.Size, usage.Size + virtualSize, nil
+func (i *ImageService) GetContainerLayerSize(containerID string) (int64, int64) {
+	panic("not implemented")
 }

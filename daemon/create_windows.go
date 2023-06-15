@@ -6,6 +6,7 @@ import (
 
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/container"
+	"github.com/docker/docker/pkg/stringid"
 	volumemounts "github.com/docker/docker/volume/mounts"
 	volumeopts "github.com/docker/docker/volume/service/opts"
 )
@@ -24,6 +25,11 @@ func (daemon *Daemon) createContainerOSSpecificSettings(container *container.Con
 			return fmt.Errorf("Unrecognised volume spec: %v", err)
 		}
 
+		// If the mountpoint doesn't have a name, generate one.
+		if len(mp.Name) == 0 {
+			mp.Name = stringid.GenerateRandomID()
+		}
+
 		// Skip volumes for which we already have something mounted on that
 		// destination because of a --volume-from.
 		if container.IsDestinationMounted(mp.Destination) {
@@ -34,7 +40,7 @@ func (daemon *Daemon) createContainerOSSpecificSettings(container *container.Con
 
 		// Create the volume in the volume driver. If it doesn't exist,
 		// a new one will be created.
-		v, err := daemon.volumes.Create(context.TODO(), "", volumeDriver, volumeopts.WithCreateReference(container.ID))
+		v, err := daemon.volumes.Create(context.TODO(), mp.Name, volumeDriver, volumeopts.WithCreateReference(container.ID))
 		if err != nil {
 			return err
 		}

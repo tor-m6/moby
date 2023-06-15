@@ -1,5 +1,5 @@
-//go:build linux || freebsd
-// +build linux freebsd
+//go:build linux || freebsd || inno
+// +build linux freebsd inno
 
 package daemon // import "github.com/docker/docker/daemon"
 
@@ -18,10 +18,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/containerd/cgroups/v3"
-	statsV1 "github.com/containerd/cgroups/v3/cgroup1/stats"
-	statsV2 "github.com/containerd/cgroups/v3/cgroup2/stats"
-	"github.com/containerd/containerd/pkg/userns"
+	// "github.com/containerd/cgroups"
+	// statsV1 "github.com/containerd/cgroups/stats/v1"
+	// statsV2 "github.com/containerd/cgroups/v2/stats"
+	// "github.com/containerd/containerd/pkg/userns"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/blkiodev"
 	pblkiodev "github.com/docker/docker/api/types/blkiodev"
@@ -35,6 +35,7 @@ import (
 	nwconfig "github.com/docker/docker/libnetwork/config"
 	"github.com/docker/docker/libnetwork/drivers/bridge"
 	"github.com/docker/docker/libnetwork/netlabel"
+	"github.com/docker/docker/libnetwork/netutils"
 	"github.com/docker/docker/libnetwork/options"
 	lntypes "github.com/docker/docker/libnetwork/types"
 	"github.com/docker/docker/opts"
@@ -46,7 +47,7 @@ import (
 	volumemounts "github.com/docker/docker/volume/mounts"
 	"github.com/moby/sys/mount"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
-	"github.com/opencontainers/selinux/go-selinux"
+	// "github.com/opencontainers/selinux/go-selinux"
 	"github.com/opencontainers/selinux/go-selinux/label"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -175,11 +176,11 @@ func getCPUResources(config containertypes.Resources) (*specs.LinuxCPU, error) {
 }
 
 func getBlkioWeightDevices(config containertypes.Resources) ([]specs.LinuxWeightDevice, error) {
-	var stat unix.Stat_t
+	var stat syscall.Stat_t
 	var blkioWeightDevices []specs.LinuxWeightDevice
 
 	for _, weightDevice := range config.BlkioWeightDevice {
-		if err := unix.Stat(weightDevice.Path, &stat); err != nil {
+		if err := syscall.Stat(weightDevice.Path, &stat); err != nil {
 			return nil, errors.WithStack(&os.PathError{Op: "stat", Path: weightDevice.Path, Err: err})
 		}
 		weight := weightDevice.Weight
@@ -214,27 +215,26 @@ func parseSecurityOpt(container *container.Container, config *containertypes.Hos
 			continue
 		}
 
-		var k, v string
-		var ok bool
+		var con []string
 		if strings.Contains(opt, "=") {
-			k, v, ok = strings.Cut(opt, "=")
+			con = strings.SplitN(opt, "=", 2)
 		} else if strings.Contains(opt, ":") {
-			k, v, ok = strings.Cut(opt, ":")
+			con = strings.SplitN(opt, ":", 2)
 			logrus.Warn("Security options with `:` as a separator are deprecated and will be completely unsupported in 17.04, use `=` instead.")
 		}
-		if !ok {
+		if len(con) != 2 {
 			return fmt.Errorf("invalid --security-opt 1: %q", opt)
 		}
 
-		switch k {
+		switch con[0] {
 		case "label":
-			labelOpts = append(labelOpts, v)
+			labelOpts = append(labelOpts, con[1])
 		case "apparmor":
-			container.AppArmorProfile = v
+			container.AppArmorProfile = con[1]
 		case "seccomp":
-			container.SeccompProfile = v
+			container.SeccompProfile = con[1]
 		case "no-new-privileges":
-			noNewPrivileges, err := strconv.ParseBool(v)
+			noNewPrivileges, err := strconv.ParseBool(con[1])
 			if err != nil {
 				return fmt.Errorf("invalid --security-opt 2: %q", opt)
 			}
@@ -250,10 +250,10 @@ func parseSecurityOpt(container *container.Container, config *containertypes.Hos
 
 func getBlkioThrottleDevices(devs []*blkiodev.ThrottleDevice) ([]specs.LinuxThrottleDevice, error) {
 	var throttleDevices []specs.LinuxThrottleDevice
-	var stat unix.Stat_t
+	var stat syscall.Stat_t
 
 	for _, d := range devs {
-		if err := unix.Stat(d.Path, &stat); err != nil {
+		if err := syscall.Stat(d.Path, &stat); err != nil {
 			return nil, errors.WithStack(&os.PathError{Op: "stat", Path: d.Path, Err: err})
 		}
 		d := specs.LinuxThrottleDevice{Rate: d.Rate}
@@ -280,8 +280,8 @@ func adjustParallelLimit(n int, limit int) int {
 	// exceed RLIMIT_NOFILE. If parallelStartupJobs is too large, we reduce it
 	// and give a warning (since in theory the user should increase their
 	// ulimits to the largest possible value for dockerd).
-	var rlim unix.Rlimit
-	if err := unix.Getrlimit(unix.RLIMIT_NOFILE, &rlim); err != nil {
+	var rlim syscall.Rlimit
+	if err := syscall.Getrlimit(unix.RLIMIT_NOFILE, &rlim); err != nil {
 		logrus.Warnf("Couldn't find dockerd's RLIMIT_NOFILE to double-check startup parallelism factor: %v", err)
 		return limit
 	}
@@ -333,23 +333,23 @@ func (daemon *Daemon) adaptContainerSettings(hostConfig *containertypes.HostConf
 		hostConfig.IpcMode = m
 	}
 
-	// Set default cgroup namespace mode, if unset for container
-	if hostConfig.CgroupnsMode.IsEmpty() {
-		// for cgroup v2: unshare cgroupns even for privileged containers
-		// https://github.com/containers/libpod/pull/4374#issuecomment-549776387
-		if hostConfig.Privileged && cgroups.Mode() != cgroups.Unified {
-			hostConfig.CgroupnsMode = containertypes.CgroupnsModeHost
-		} else {
-			m := containertypes.CgroupnsModeHost
-			if cgroups.Mode() == cgroups.Unified {
-				m = containertypes.CgroupnsModePrivate
-			}
-			if daemon.configStore != nil {
-				m = containertypes.CgroupnsMode(daemon.configStore.CgroupNamespaceMode)
-			}
-			hostConfig.CgroupnsMode = m
-		}
-	}
+	// // Set default cgroup namespace mode, if unset for container
+	// if hostConfig.CgroupnsMode.IsEmpty() {
+	// 	// for cgroup v2: unshare cgroupns even for privileged containers
+	// 	// https://github.com/containers/libpod/pull/4374#issuecomment-549776387
+	// 	if hostConfig.Privileged && cgroups.Mode() != cgroups.Unified {
+	// 		hostConfig.CgroupnsMode = containertypes.CgroupnsModeHost
+	// 	} else {
+	// 		m := containertypes.CgroupnsModeHost
+	// 		if cgroups.Mode() == cgroups.Unified {
+	// 			m = containertypes.CgroupnsModePrivate
+	// 		}
+	// 		if daemon.configStore != nil {
+	// 			m = containertypes.CgroupnsMode(daemon.configStore.CgroupNamespaceMode)
+	// 		}
+	// 		hostConfig.CgroupnsMode = m
+	// 	}
+	// }
 
 	adaptSharedNamespaceContainer(daemon, hostConfig)
 
@@ -611,10 +611,10 @@ func UsingSystemd(config *config.Config) bool {
 	if cd == cgroupSystemdDriver {
 		return true
 	}
-	// On cgroup v2 hosts, default to systemd driver
-	if cd == "" && cgroups.Mode() == cgroups.Unified && isRunningSystemd() {
-		return true
-	}
+	// // On cgroup v2 hosts, default to systemd driver
+	// if cd == "" && cgroups.Mode() == cgroups.Unified && isRunningSystemd() {
+	// 	return true
+	// }
 	return false
 }
 
@@ -705,7 +705,7 @@ func verifyPlatformContainerSettings(daemon *Daemon, hostConfig *containertypes.
 		hostConfig.Runtime = daemon.configStore.GetDefaultRuntimeName()
 	}
 
-	if _, _, err := daemon.getRuntime(hostConfig.Runtime); err != nil {
+	if _, err := daemon.getRuntime(hostConfig.Runtime); err != nil {
 		return warnings, err
 	}
 
@@ -749,15 +749,15 @@ func verifyDaemonSettings(conf *config.Config) error {
 	if err := verifyCgroupDriver(conf); err != nil {
 		return err
 	}
-	if conf.CgroupParent != "" && UsingSystemd(conf) {
-		if len(conf.CgroupParent) <= 6 || !strings.HasSuffix(conf.CgroupParent, ".slice") {
-			return fmt.Errorf("cgroup-parent for systemd cgroup should be a valid slice named as \"xxx.slice\"")
-		}
-	}
+	// if conf.CgroupParent != "" && UsingSystemd(conf) {
+	// 	if len(conf.CgroupParent) <= 6 || !strings.HasSuffix(conf.CgroupParent, ".slice") {
+	// 		return fmt.Errorf("cgroup-parent for systemd cgroup should be a valid slice named as \"xxx.slice\"")
+	// 	}
+	// }
 
-	if conf.Rootless && UsingSystemd(conf) && cgroups.Mode() != cgroups.Unified {
-		return fmt.Errorf("exec-opt native.cgroupdriver=systemd requires cgroup v2 for rootless mode")
-	}
+	// if conf.Rootless && UsingSystemd(conf) && cgroups.Mode() != cgroups.Unified {
+	// 	return fmt.Errorf("exec-opt native.cgroupdriver=systemd requires cgroup v2 for rootless mode")
+	// }
 
 	configureRuntimes(conf)
 	if rtName := conf.GetDefaultRuntimeName(); rtName != "" {
@@ -814,27 +814,27 @@ func overlaySupportsSelinux() (bool, error) {
 
 // configureKernelSecuritySupport configures and validates security support for the kernel
 func configureKernelSecuritySupport(config *config.Config, driverName string) error {
-	if config.EnableSelinuxSupport {
-		if !selinux.GetEnabled() {
+	// if config.EnableSelinuxSupport {
+	// 	if !selinux.GetEnabled() {
 			logrus.Warn("Docker could not enable SELinux on the host system")
-			return nil
-		}
+	// 		return nil
+	// 	}
 
-		if driverName == "overlay" || driverName == "overlay2" || driverName == "overlayfs" {
-			// If driver is overlay or overlay2, make sure kernel
-			// supports selinux with overlay.
-			supported, err := overlaySupportsSelinux()
-			if err != nil {
-				return err
-			}
+	// 	if driverName == "overlay" || driverName == "overlay2" || driverName == "overlayfs" {
+	// 		// If driver is overlay or overlay2, make sure kernel
+	// 		// supports selinux with overlay.
+	// 		supported, err := overlaySupportsSelinux()
+	// 		if err != nil {
+	// 			return err
+	// 		}
 
-			if !supported {
-				logrus.Warnf("SELinux is not supported with the %v graph driver on this kernel", driverName)
-			}
-		}
-	} else {
-		selinux.SetDisabled()
-	}
+	// 		if !supported {
+	// 			logrus.Warnf("SELinux is not supported with the %v graph driver on this kernel", driverName)
+	// 		}
+	// 	}
+	// } else {
+	// 	selinux.SetDisabled()
+	// }
 	return nil
 }
 
@@ -863,7 +863,7 @@ func (daemon *Daemon) initNetworkController(activeSandboxes map[string]interface
 	return nil
 }
 
-func configureNetworking(controller *libnetwork.Controller, conf *config.Config) error {
+func configureNetworking(controller libnetwork.NetworkController, conf *config.Config) error {
 	// Initialize default network on "null"
 	if n, _ := controller.NetworkByName("none"); n == nil {
 		if _, err := controller.NewNetwork("null", "none", "", libnetwork.NetworkOptionPersist(true)); err != nil {
@@ -901,7 +901,7 @@ func configureNetworking(controller *libnetwork.Controller, conf *config.Config)
 }
 
 // setHostGatewayIP sets cfg.HostGatewayIP to the default bridge's IP if it is empty.
-func setHostGatewayIP(controller *libnetwork.Controller, config *config.Config) {
+func setHostGatewayIP(controller libnetwork.NetworkController, config *config.Config) {
 	if config.HostGatewayIP != nil {
 		return
 	}
@@ -929,7 +929,7 @@ func driverOptions(config *config.Config) nwconfig.Option {
 	})
 }
 
-func initBridgeDriver(controller *libnetwork.Controller, config *config.Config) error {
+func initBridgeDriver(controller libnetwork.NetworkController, config *config.Config) error {
 	bridgeName := bridge.DefaultBridgeName
 	if config.BridgeConfig.Iface != "" {
 		bridgeName = config.BridgeConfig.Iface
@@ -949,37 +949,30 @@ func initBridgeDriver(controller *libnetwork.Controller, config *config.Config) 
 
 	ipamV4Conf := &libnetwork.IpamConf{AuxAddresses: make(map[string]string)}
 
-	// By default, libnetwork will request an arbitrary available address
-	// pool for the network from the configured IPAM allocator.
-	// Configure it to use the IPv4 network ranges of the existing bridge
-	// interface if one exists with IPv4 addresses assigned to it.
-
-	nwList, nw6List, err := ifaceAddrs(bridgeName)
+	nwList, nw6List, err := netutils.ElectInterfaceAddresses(bridgeName)
 	if err != nil {
 		return errors.Wrap(err, "list bridge addresses failed")
 	}
 
-	if len(nwList) > 0 {
-		nw := nwList[0]
-		if len(nwList) > 1 && config.BridgeConfig.FixedCIDR != "" {
-			_, fCIDR, err := net.ParseCIDR(config.BridgeConfig.FixedCIDR)
-			if err != nil {
-				return errors.Wrap(err, "parse CIDR failed")
-			}
-			// Iterate through in case there are multiple addresses for the bridge
-			for _, entry := range nwList {
-				if fCIDR.Contains(entry.IP) {
-					nw = entry
-					break
-				}
+	nw := nwList[0]
+	if len(nwList) > 1 && config.BridgeConfig.FixedCIDR != "" {
+		_, fCIDR, err := net.ParseCIDR(config.BridgeConfig.FixedCIDR)
+		if err != nil {
+			return errors.Wrap(err, "parse CIDR failed")
+		}
+		// Iterate through in case there are multiple addresses for the bridge
+		for _, entry := range nwList {
+			if fCIDR.Contains(entry.IP) {
+				nw = entry
+				break
 			}
 		}
+	}
 
-		ipamV4Conf.PreferredPool = lntypes.GetIPNetCanonical(nw).String()
-		hip, _ := lntypes.GetHostPartIP(nw.IP, nw.Mask)
-		if hip.IsGlobalUnicast() {
-			ipamV4Conf.Gateway = nw.IP.String()
-		}
+	ipamV4Conf.PreferredPool = lntypes.GetIPNetCanonical(nw).String()
+	hip, _ := lntypes.GetHostPartIP(nw.IP, nw.Mask)
+	if hip.IsGlobalUnicast() {
+		ipamV4Conf.Gateway = nw.IP.String()
 	}
 
 	if config.BridgeConfig.IP != "" {
@@ -1343,8 +1336,7 @@ func getUnmountOnShutdownPath(config *config.Config) string {
 	return filepath.Join(config.ExecRoot, "unmount-on-shutdown")
 }
 
-// registerLinks registers network links between container and other containers
-// with the daemon using the specification in hostConfig.
+// registerLinks writes the links to a file.
 func (daemon *Daemon) registerLinks(container *container.Container, hostConfig *containertypes.HostConfig) error {
 	if hostConfig == nil || hostConfig.NetworkMode.IsUserDefined() {
 		return nil
@@ -1367,8 +1359,8 @@ func (daemon *Daemon) registerLinks(container *container.Container, hostConfig *
 			return errors.Wrapf(err, "could not get container for %s", name)
 		}
 		for child.HostConfig.NetworkMode.IsContainer() {
-			cid := child.HostConfig.NetworkMode.ConnectedContainer()
-			child, err = daemon.GetContainer(cid)
+			parts := strings.SplitN(string(child.HostConfig.NetworkMode), ":", 2)
+			child, err = daemon.GetContainer(parts[1])
 			if err != nil {
 				if errdefs.IsNotFound(err) {
 					// Trying to link to a non-existing container is not valid, and
@@ -1377,7 +1369,7 @@ func (daemon *Daemon) registerLinks(container *container.Container, hostConfig *
 					// image could not be found (see moby/moby#39823)
 					err = errdefs.InvalidParameter(err)
 				}
-				return errors.Wrapf(err, "could not get container for %s", cid)
+				return errors.Wrapf(err, "Could not get container for %s", parts[1])
 			}
 		}
 		if child.HostConfig.NetworkMode.IsHost() {
@@ -1388,39 +1380,36 @@ func (daemon *Daemon) registerLinks(container *container.Container, hostConfig *
 		}
 	}
 
-	return nil
+	// After we load all the links into the daemon
+	// set them to nil on the hostconfig
+	_, err := container.WriteHostConfig()
+	return err
 }
 
 // conditionalMountOnStart is a platform specific helper function during the
 // container start to call mount.
 func (daemon *Daemon) conditionalMountOnStart(container *container.Container) error {
-	if !daemon.UsesSnapshotter() {
-		return daemon.Mount(container)
-	}
-	return nil
+	return daemon.Mount(container)
 }
 
 // conditionalUnmountOnCleanup is a platform specific helper function called
 // during the cleanup of a container to unmount.
 func (daemon *Daemon) conditionalUnmountOnCleanup(container *container.Container) error {
-	if !daemon.UsesSnapshotter() {
-		return daemon.Unmount(container)
-	}
-	return nil
+	return daemon.Unmount(container)
 }
 
-func copyBlkioEntry(entries []*statsV1.BlkIOEntry) []types.BlkioStatEntry {
-	out := make([]types.BlkioStatEntry, len(entries))
-	for i, re := range entries {
-		out[i] = types.BlkioStatEntry{
-			Major: re.Major,
-			Minor: re.Minor,
-			Op:    re.Op,
-			Value: re.Value,
-		}
-	}
-	return out
-}
+// func copyBlkioEntry(entries []*statsV1.BlkIOEntry) []types.BlkioStatEntry {
+// 	out := make([]types.BlkioStatEntry, len(entries))
+// 	for i, re := range entries {
+// 		out[i] = types.BlkioStatEntry{
+// 			Major: re.Major,
+// 			Minor: re.Minor,
+// 			Op:    re.Op,
+// 			Value: re.Value,
+// 		}
+// 	}
+// 	return out
+// }
 
 func (daemon *Daemon) stats(c *container.Container) (*types.StatsJSON, error) {
 	c.Lock()
@@ -1440,210 +1429,210 @@ func (daemon *Daemon) stats(c *container.Container) (*types.StatsJSON, error) {
 	s.Read = cs.Read
 	stats := cs.Metrics
 	switch t := stats.(type) {
-	case *statsV1.Metrics:
-		return daemon.statsV1(s, t)
-	case *statsV2.Metrics:
-		return daemon.statsV2(s, t)
+	// case *statsV1.Metrics:
+	// 	return daemon.statsV1(s, t)
+	// case *statsV2.Metrics:
+	// 	return daemon.statsV2(s, t)
 	default:
 		return nil, errors.Errorf("unexpected type of metrics %+v", t)
 	}
 }
 
-func (daemon *Daemon) statsV1(s *types.StatsJSON, stats *statsV1.Metrics) (*types.StatsJSON, error) {
-	if stats.Blkio != nil {
-		s.BlkioStats = types.BlkioStats{
-			IoServiceBytesRecursive: copyBlkioEntry(stats.Blkio.IoServiceBytesRecursive),
-			IoServicedRecursive:     copyBlkioEntry(stats.Blkio.IoServicedRecursive),
-			IoQueuedRecursive:       copyBlkioEntry(stats.Blkio.IoQueuedRecursive),
-			IoServiceTimeRecursive:  copyBlkioEntry(stats.Blkio.IoServiceTimeRecursive),
-			IoWaitTimeRecursive:     copyBlkioEntry(stats.Blkio.IoWaitTimeRecursive),
-			IoMergedRecursive:       copyBlkioEntry(stats.Blkio.IoMergedRecursive),
-			IoTimeRecursive:         copyBlkioEntry(stats.Blkio.IoTimeRecursive),
-			SectorsRecursive:        copyBlkioEntry(stats.Blkio.SectorsRecursive),
-		}
-	}
-	if stats.CPU != nil {
-		s.CPUStats = types.CPUStats{
-			CPUUsage: types.CPUUsage{
-				TotalUsage:        stats.CPU.Usage.Total,
-				PercpuUsage:       stats.CPU.Usage.PerCPU,
-				UsageInKernelmode: stats.CPU.Usage.Kernel,
-				UsageInUsermode:   stats.CPU.Usage.User,
-			},
-			ThrottlingData: types.ThrottlingData{
-				Periods:          stats.CPU.Throttling.Periods,
-				ThrottledPeriods: stats.CPU.Throttling.ThrottledPeriods,
-				ThrottledTime:    stats.CPU.Throttling.ThrottledTime,
-			},
-		}
-	}
+// func (daemon *Daemon) statsV1(s *types.StatsJSON, stats *statsV1.Metrics) (*types.StatsJSON, error) {
+// 	if stats.Blkio != nil {
+// 		s.BlkioStats = types.BlkioStats{
+// 			IoServiceBytesRecursive: copyBlkioEntry(stats.Blkio.IoServiceBytesRecursive),
+// 			IoServicedRecursive:     copyBlkioEntry(stats.Blkio.IoServicedRecursive),
+// 			IoQueuedRecursive:       copyBlkioEntry(stats.Blkio.IoQueuedRecursive),
+// 			IoServiceTimeRecursive:  copyBlkioEntry(stats.Blkio.IoServiceTimeRecursive),
+// 			IoWaitTimeRecursive:     copyBlkioEntry(stats.Blkio.IoWaitTimeRecursive),
+// 			IoMergedRecursive:       copyBlkioEntry(stats.Blkio.IoMergedRecursive),
+// 			IoTimeRecursive:         copyBlkioEntry(stats.Blkio.IoTimeRecursive),
+// 			SectorsRecursive:        copyBlkioEntry(stats.Blkio.SectorsRecursive),
+// 		}
+// 	}
+// 	if stats.CPU != nil {
+// 		s.CPUStats = types.CPUStats{
+// 			CPUUsage: types.CPUUsage{
+// 				TotalUsage:        stats.CPU.Usage.Total,
+// 				PercpuUsage:       stats.CPU.Usage.PerCPU,
+// 				UsageInKernelmode: stats.CPU.Usage.Kernel,
+// 				UsageInUsermode:   stats.CPU.Usage.User,
+// 			},
+// 			ThrottlingData: types.ThrottlingData{
+// 				Periods:          stats.CPU.Throttling.Periods,
+// 				ThrottledPeriods: stats.CPU.Throttling.ThrottledPeriods,
+// 				ThrottledTime:    stats.CPU.Throttling.ThrottledTime,
+// 			},
+// 		}
+// 	}
 
-	if stats.Memory != nil {
-		raw := map[string]uint64{
-			"cache":                     stats.Memory.Cache,
-			"rss":                       stats.Memory.RSS,
-			"rss_huge":                  stats.Memory.RSSHuge,
-			"mapped_file":               stats.Memory.MappedFile,
-			"dirty":                     stats.Memory.Dirty,
-			"writeback":                 stats.Memory.Writeback,
-			"pgpgin":                    stats.Memory.PgPgIn,
-			"pgpgout":                   stats.Memory.PgPgOut,
-			"pgfault":                   stats.Memory.PgFault,
-			"pgmajfault":                stats.Memory.PgMajFault,
-			"inactive_anon":             stats.Memory.InactiveAnon,
-			"active_anon":               stats.Memory.ActiveAnon,
-			"inactive_file":             stats.Memory.InactiveFile,
-			"active_file":               stats.Memory.ActiveFile,
-			"unevictable":               stats.Memory.Unevictable,
-			"hierarchical_memory_limit": stats.Memory.HierarchicalMemoryLimit,
-			"hierarchical_memsw_limit":  stats.Memory.HierarchicalSwapLimit,
-			"total_cache":               stats.Memory.TotalCache,
-			"total_rss":                 stats.Memory.TotalRSS,
-			"total_rss_huge":            stats.Memory.TotalRSSHuge,
-			"total_mapped_file":         stats.Memory.TotalMappedFile,
-			"total_dirty":               stats.Memory.TotalDirty,
-			"total_writeback":           stats.Memory.TotalWriteback,
-			"total_pgpgin":              stats.Memory.TotalPgPgIn,
-			"total_pgpgout":             stats.Memory.TotalPgPgOut,
-			"total_pgfault":             stats.Memory.TotalPgFault,
-			"total_pgmajfault":          stats.Memory.TotalPgMajFault,
-			"total_inactive_anon":       stats.Memory.TotalInactiveAnon,
-			"total_active_anon":         stats.Memory.TotalActiveAnon,
-			"total_inactive_file":       stats.Memory.TotalInactiveFile,
-			"total_active_file":         stats.Memory.TotalActiveFile,
-			"total_unevictable":         stats.Memory.TotalUnevictable,
-		}
-		if stats.Memory.Usage != nil {
-			s.MemoryStats = types.MemoryStats{
-				Stats:    raw,
-				Usage:    stats.Memory.Usage.Usage,
-				MaxUsage: stats.Memory.Usage.Max,
-				Limit:    stats.Memory.Usage.Limit,
-				Failcnt:  stats.Memory.Usage.Failcnt,
-			}
-		} else {
-			s.MemoryStats = types.MemoryStats{
-				Stats: raw,
-			}
-		}
+// 	if stats.Memory != nil {
+// 		raw := map[string]uint64{
+// 			"cache":                     stats.Memory.Cache,
+// 			"rss":                       stats.Memory.RSS,
+// 			"rss_huge":                  stats.Memory.RSSHuge,
+// 			"mapped_file":               stats.Memory.MappedFile,
+// 			"dirty":                     stats.Memory.Dirty,
+// 			"writeback":                 stats.Memory.Writeback,
+// 			"pgpgin":                    stats.Memory.PgPgIn,
+// 			"pgpgout":                   stats.Memory.PgPgOut,
+// 			"pgfault":                   stats.Memory.PgFault,
+// 			"pgmajfault":                stats.Memory.PgMajFault,
+// 			"inactive_anon":             stats.Memory.InactiveAnon,
+// 			"active_anon":               stats.Memory.ActiveAnon,
+// 			"inactive_file":             stats.Memory.InactiveFile,
+// 			"active_file":               stats.Memory.ActiveFile,
+// 			"unevictable":               stats.Memory.Unevictable,
+// 			"hierarchical_memory_limit": stats.Memory.HierarchicalMemoryLimit,
+// 			"hierarchical_memsw_limit":  stats.Memory.HierarchicalSwapLimit,
+// 			"total_cache":               stats.Memory.TotalCache,
+// 			"total_rss":                 stats.Memory.TotalRSS,
+// 			"total_rss_huge":            stats.Memory.TotalRSSHuge,
+// 			"total_mapped_file":         stats.Memory.TotalMappedFile,
+// 			"total_dirty":               stats.Memory.TotalDirty,
+// 			"total_writeback":           stats.Memory.TotalWriteback,
+// 			"total_pgpgin":              stats.Memory.TotalPgPgIn,
+// 			"total_pgpgout":             stats.Memory.TotalPgPgOut,
+// 			"total_pgfault":             stats.Memory.TotalPgFault,
+// 			"total_pgmajfault":          stats.Memory.TotalPgMajFault,
+// 			"total_inactive_anon":       stats.Memory.TotalInactiveAnon,
+// 			"total_active_anon":         stats.Memory.TotalActiveAnon,
+// 			"total_inactive_file":       stats.Memory.TotalInactiveFile,
+// 			"total_active_file":         stats.Memory.TotalActiveFile,
+// 			"total_unevictable":         stats.Memory.TotalUnevictable,
+// 		}
+// 		if stats.Memory.Usage != nil {
+// 			s.MemoryStats = types.MemoryStats{
+// 				Stats:    raw,
+// 				Usage:    stats.Memory.Usage.Usage,
+// 				MaxUsage: stats.Memory.Usage.Max,
+// 				Limit:    stats.Memory.Usage.Limit,
+// 				Failcnt:  stats.Memory.Usage.Failcnt,
+// 			}
+// 		} else {
+// 			s.MemoryStats = types.MemoryStats{
+// 				Stats: raw,
+// 			}
+// 		}
 
-		// if the container does not set memory limit, use the machineMemory
-		if s.MemoryStats.Limit > daemon.machineMemory && daemon.machineMemory > 0 {
-			s.MemoryStats.Limit = daemon.machineMemory
-		}
-	}
+// 		// if the container does not set memory limit, use the machineMemory
+// 		if s.MemoryStats.Limit > daemon.machineMemory && daemon.machineMemory > 0 {
+// 			s.MemoryStats.Limit = daemon.machineMemory
+// 		}
+// 	}
 
-	if stats.Pids != nil {
-		s.PidsStats = types.PidsStats{
-			Current: stats.Pids.Current,
-			Limit:   stats.Pids.Limit,
-		}
-	}
+// 	if stats.Pids != nil {
+// 		s.PidsStats = types.PidsStats{
+// 			Current: stats.Pids.Current,
+// 			Limit:   stats.Pids.Limit,
+// 		}
+// 	}
 
-	return s, nil
-}
+// 	return s, nil
+// }
 
-func (daemon *Daemon) statsV2(s *types.StatsJSON, stats *statsV2.Metrics) (*types.StatsJSON, error) {
-	if stats.Io != nil {
-		var isbr []types.BlkioStatEntry
-		for _, re := range stats.Io.Usage {
-			isbr = append(isbr,
-				types.BlkioStatEntry{
-					Major: re.Major,
-					Minor: re.Minor,
-					Op:    "read",
-					Value: re.Rbytes,
-				},
-				types.BlkioStatEntry{
-					Major: re.Major,
-					Minor: re.Minor,
-					Op:    "write",
-					Value: re.Wbytes,
-				},
-			)
-		}
-		s.BlkioStats = types.BlkioStats{
-			IoServiceBytesRecursive: isbr,
-			// Other fields are unsupported
-		}
-	}
+// func (daemon *Daemon) statsV2(s *types.StatsJSON, stats *statsV2.Metrics) (*types.StatsJSON, error) {
+// 	if stats.Io != nil {
+// 		var isbr []types.BlkioStatEntry
+// 		for _, re := range stats.Io.Usage {
+// 			isbr = append(isbr,
+// 				types.BlkioStatEntry{
+// 					Major: re.Major,
+// 					Minor: re.Minor,
+// 					Op:    "read",
+// 					Value: re.Rbytes,
+// 				},
+// 				types.BlkioStatEntry{
+// 					Major: re.Major,
+// 					Minor: re.Minor,
+// 					Op:    "write",
+// 					Value: re.Wbytes,
+// 				},
+// 			)
+// 		}
+// 		s.BlkioStats = types.BlkioStats{
+// 			IoServiceBytesRecursive: isbr,
+// 			// Other fields are unsupported
+// 		}
+// 	}
 
-	if stats.CPU != nil {
-		s.CPUStats = types.CPUStats{
-			CPUUsage: types.CPUUsage{
-				TotalUsage: stats.CPU.UsageUsec * 1000,
-				// PercpuUsage is not supported
-				UsageInKernelmode: stats.CPU.SystemUsec * 1000,
-				UsageInUsermode:   stats.CPU.UserUsec * 1000,
-			},
-			ThrottlingData: types.ThrottlingData{
-				Periods:          stats.CPU.NrPeriods,
-				ThrottledPeriods: stats.CPU.NrThrottled,
-				ThrottledTime:    stats.CPU.ThrottledUsec * 1000,
-			},
-		}
-	}
+// 	if stats.CPU != nil {
+// 		s.CPUStats = types.CPUStats{
+// 			CPUUsage: types.CPUUsage{
+// 				TotalUsage: stats.CPU.UsageUsec * 1000,
+// 				// PercpuUsage is not supported
+// 				UsageInKernelmode: stats.CPU.SystemUsec * 1000,
+// 				UsageInUsermode:   stats.CPU.UserUsec * 1000,
+// 			},
+// 			ThrottlingData: types.ThrottlingData{
+// 				Periods:          stats.CPU.NrPeriods,
+// 				ThrottledPeriods: stats.CPU.NrThrottled,
+// 				ThrottledTime:    stats.CPU.ThrottledUsec * 1000,
+// 			},
+// 		}
+// 	}
 
-	if stats.Memory != nil {
-		s.MemoryStats = types.MemoryStats{
-			// Stats is not compatible with v1
-			Stats: map[string]uint64{
-				"anon":                   stats.Memory.Anon,
-				"file":                   stats.Memory.File,
-				"kernel_stack":           stats.Memory.KernelStack,
-				"slab":                   stats.Memory.Slab,
-				"sock":                   stats.Memory.Sock,
-				"shmem":                  stats.Memory.Shmem,
-				"file_mapped":            stats.Memory.FileMapped,
-				"file_dirty":             stats.Memory.FileDirty,
-				"file_writeback":         stats.Memory.FileWriteback,
-				"anon_thp":               stats.Memory.AnonThp,
-				"inactive_anon":          stats.Memory.InactiveAnon,
-				"active_anon":            stats.Memory.ActiveAnon,
-				"inactive_file":          stats.Memory.InactiveFile,
-				"active_file":            stats.Memory.ActiveFile,
-				"unevictable":            stats.Memory.Unevictable,
-				"slab_reclaimable":       stats.Memory.SlabReclaimable,
-				"slab_unreclaimable":     stats.Memory.SlabUnreclaimable,
-				"pgfault":                stats.Memory.Pgfault,
-				"pgmajfault":             stats.Memory.Pgmajfault,
-				"workingset_refault":     stats.Memory.WorkingsetRefault,
-				"workingset_activate":    stats.Memory.WorkingsetActivate,
-				"workingset_nodereclaim": stats.Memory.WorkingsetNodereclaim,
-				"pgrefill":               stats.Memory.Pgrefill,
-				"pgscan":                 stats.Memory.Pgscan,
-				"pgsteal":                stats.Memory.Pgsteal,
-				"pgactivate":             stats.Memory.Pgactivate,
-				"pgdeactivate":           stats.Memory.Pgdeactivate,
-				"pglazyfree":             stats.Memory.Pglazyfree,
-				"pglazyfreed":            stats.Memory.Pglazyfreed,
-				"thp_fault_alloc":        stats.Memory.ThpFaultAlloc,
-				"thp_collapse_alloc":     stats.Memory.ThpCollapseAlloc,
-			},
-			Usage: stats.Memory.Usage,
-			// MaxUsage is not supported
-			Limit: stats.Memory.UsageLimit,
-		}
-		// if the container does not set memory limit, use the machineMemory
-		if s.MemoryStats.Limit > daemon.machineMemory && daemon.machineMemory > 0 {
-			s.MemoryStats.Limit = daemon.machineMemory
-		}
-		if stats.MemoryEvents != nil {
-			// Failcnt is set to the "oom" field of the "memory.events" file.
-			// See https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html
-			s.MemoryStats.Failcnt = stats.MemoryEvents.Oom
-		}
-	}
+// 	if stats.Memory != nil {
+// 		s.MemoryStats = types.MemoryStats{
+// 			// Stats is not compatible with v1
+// 			Stats: map[string]uint64{
+// 				"anon":                   stats.Memory.Anon,
+// 				"file":                   stats.Memory.File,
+// 				"kernel_stack":           stats.Memory.KernelStack,
+// 				"slab":                   stats.Memory.Slab,
+// 				"sock":                   stats.Memory.Sock,
+// 				"shmem":                  stats.Memory.Shmem,
+// 				"file_mapped":            stats.Memory.FileMapped,
+// 				"file_dirty":             stats.Memory.FileDirty,
+// 				"file_writeback":         stats.Memory.FileWriteback,
+// 				"anon_thp":               stats.Memory.AnonThp,
+// 				"inactive_anon":          stats.Memory.InactiveAnon,
+// 				"active_anon":            stats.Memory.ActiveAnon,
+// 				"inactive_file":          stats.Memory.InactiveFile,
+// 				"active_file":            stats.Memory.ActiveFile,
+// 				"unevictable":            stats.Memory.Unevictable,
+// 				"slab_reclaimable":       stats.Memory.SlabReclaimable,
+// 				"slab_unreclaimable":     stats.Memory.SlabUnreclaimable,
+// 				"pgfault":                stats.Memory.Pgfault,
+// 				"pgmajfault":             stats.Memory.Pgmajfault,
+// 				"workingset_refault":     stats.Memory.WorkingsetRefault,
+// 				"workingset_activate":    stats.Memory.WorkingsetActivate,
+// 				"workingset_nodereclaim": stats.Memory.WorkingsetNodereclaim,
+// 				"pgrefill":               stats.Memory.Pgrefill,
+// 				"pgscan":                 stats.Memory.Pgscan,
+// 				"pgsteal":                stats.Memory.Pgsteal,
+// 				"pgactivate":             stats.Memory.Pgactivate,
+// 				"pgdeactivate":           stats.Memory.Pgdeactivate,
+// 				"pglazyfree":             stats.Memory.Pglazyfree,
+// 				"pglazyfreed":            stats.Memory.Pglazyfreed,
+// 				"thp_fault_alloc":        stats.Memory.ThpFaultAlloc,
+// 				"thp_collapse_alloc":     stats.Memory.ThpCollapseAlloc,
+// 			},
+// 			Usage: stats.Memory.Usage,
+// 			// MaxUsage is not supported
+// 			Limit: stats.Memory.UsageLimit,
+// 		}
+// 		// if the container does not set memory limit, use the machineMemory
+// 		if s.MemoryStats.Limit > daemon.machineMemory && daemon.machineMemory > 0 {
+// 			s.MemoryStats.Limit = daemon.machineMemory
+// 		}
+// 		if stats.MemoryEvents != nil {
+// 			// Failcnt is set to the "oom" field of the "memory.events" file.
+// 			// See https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html
+// 			s.MemoryStats.Failcnt = stats.MemoryEvents.Oom
+// 		}
+// 	}
 
-	if stats.Pids != nil {
-		s.PidsStats = types.PidsStats{
-			Current: stats.Pids.Current,
-			Limit:   stats.Pids.Limit,
-		}
-	}
+// 	if stats.Pids != nil {
+// 		s.PidsStats = types.PidsStats{
+// 			Current: stats.Pids.Current,
+// 			Limit:   stats.Pids.Limit,
+// 		}
+// 	}
 
-	return s, nil
-}
+// 	return s, nil
+// }
 
 // setDefaultIsolation determines the default isolation mode for the
 // daemon to run in. This is only applicable on Windows
@@ -1684,9 +1673,9 @@ func setMayDetachMounts() error {
 		// Setting may_detach_mounts does not work in an
 		// unprivileged container. Ignore the error, but log
 		// it if we appear not to be in that situation.
-		if !userns.RunningInUserNS() {
-			logrus.Debugf("Permission denied writing %q to /proc/sys/fs/may_detach_mounts", "1")
-		}
+		// if !userns.RunningInUserNS() {
+		// 	logrus.Debugf("Permission denied writing %q to /proc/sys/fs/may_detach_mounts", "1")
+		// }
 		return nil
 	}
 	return err
@@ -1707,9 +1696,9 @@ func setupOOMScoreAdj(score int) error {
 		// Setting oom_score_adj does not work in an
 		// unprivileged container. Ignore the error, but log
 		// it if we appear not to be in that situation.
-		if !userns.RunningInUserNS() {
-			logrus.Debugf("Permission denied writing %q to /proc/self/oom_score_adj", stringScore)
-		}
+		// if !userns.RunningInUserNS() {
+		// 	logrus.Debugf("Permission denied writing %q to /proc/self/oom_score_adj", stringScore)
+		// }
 		return nil
 	}
 
@@ -1745,29 +1734,29 @@ func maybeCreateCPURealTimeFile(configValue int64, file string, path string) err
 }
 
 func (daemon *Daemon) setupSeccompProfile() error {
-	switch profile := daemon.configStore.SeccompProfile; profile {
-	case "", config.SeccompProfileDefault:
-		daemon.seccompProfilePath = config.SeccompProfileDefault
-	case config.SeccompProfileUnconfined:
-		daemon.seccompProfilePath = config.SeccompProfileUnconfined
-	default:
-		daemon.seccompProfilePath = profile
-		b, err := os.ReadFile(profile)
-		if err != nil {
-			return fmt.Errorf("opening seccomp profile (%s) failed: %v", profile, err)
-		}
-		daemon.seccompProfile = b
-	}
+	// switch profile := daemon.configStore.SeccompProfile; profile {
+	// case "", config.SeccompProfileDefault:
+	// 	daemon.seccompProfilePath = config.SeccompProfileDefault
+	// case config.SeccompProfileUnconfined:
+	// 	daemon.seccompProfilePath = config.SeccompProfileUnconfined
+	// default:
+	// 	daemon.seccompProfilePath = profile
+	// 	b, err := os.ReadFile(profile)
+	// 	if err != nil {
+	// 		return fmt.Errorf("opening seccomp profile (%s) failed: %v", profile, err)
+	// 	}
+	// 	daemon.seccompProfile = b
+	// }
 	return nil
 }
 
 func getSysInfo(daemon *Daemon) *sysinfo.SysInfo {
 	var siOpts []sysinfo.Opt
-	if daemon.getCgroupDriver() == cgroupSystemdDriver {
-		if euid := os.Getenv("ROOTLESSKIT_PARENT_EUID"); euid != "" {
-			siOpts = append(siOpts, sysinfo.WithCgroup2GroupPath("/user.slice/user-"+euid+".slice"))
-		}
-	}
+	// if daemon.getCgroupDriver() == cgroupSystemdDriver {
+	// 	if euid := os.Getenv("ROOTLESSKIT_PARENT_EUID"); euid != "" {
+	// 		siOpts = append(siOpts, sysinfo.WithCgroup2GroupPath("/user.slice/user-"+euid+".slice"))
+	// 	}
+	// }
 	return sysinfo.New(siOpts...)
 }
 

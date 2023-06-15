@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/docker/docker/daemon"
+	// "github.com/docker/docker/daemon"
 	"github.com/docker/docker/daemon/config"
 	"github.com/docker/docker/libcontainerd/supervisor"
 	"github.com/docker/docker/libnetwork/portallocator"
@@ -54,6 +54,10 @@ func setDefaultUmask() error {
 	}
 
 	return nil
+}
+
+func getDaemonConfDir(_ string) (string, error) {
+	return getDefaultDaemonConfigDir()
 }
 
 func (cli *DaemonCli) getPlatformContainerdDaemonOpts() ([]supervisor.DaemonOpt, error) {
@@ -115,16 +119,16 @@ func allocateDaemonPort(addr string) error {
 
 func newCgroupParent(config *config.Config) string {
 	cgroupParent := "docker"
-	useSystemd := daemon.UsingSystemd(config)
-	if useSystemd {
-		cgroupParent = "system.slice"
-	}
-	if config.CgroupParent != "" {
-		cgroupParent = config.CgroupParent
-	}
-	if useSystemd {
-		cgroupParent = cgroupParent + ":" + "docker" + ":"
-	}
+	// useSystemd := daemon.UsingSystemd(config)
+	// if useSystemd {
+	// 	cgroupParent = "system.slice"
+	// }
+	// if config.CgroupParent != "" {
+	// 	cgroupParent = config.CgroupParent
+	// }
+	// if useSystemd {
+	// 	cgroupParent = cgroupParent + ":" + "docker" + ":"
+	// }
 	return cgroupParent
 }
 

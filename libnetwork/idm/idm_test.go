@@ -2,8 +2,6 @@ package idm
 
 import (
 	"testing"
-
-	_ "github.com/docker/libnetwork/testutils"
 )
 
 func TestNew(t *testing.T) {

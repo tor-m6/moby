@@ -3,7 +3,7 @@ package chrootarchive // import "github.com/docker/docker/pkg/chrootarchive"
 import (
 	"github.com/docker/docker/internal/mounttree"
 	"github.com/docker/docker/internal/unshare"
-	// "github.com/moby/sys/mount"
+	"github.com/moby/sys/mount"
 	"golang.org/x/sys/unix"
 )
 
@@ -23,9 +23,9 @@ func goInChroot(path string, fn func()) error {
 			//   which could potentially cause transient errors for other operations,
 			//   even though this should be relatively small window here `slave` should
 			//   not cause any problems.
-			// if err := mount.MakeRSlave("/"); err != nil {
-			// 	return err
-			// }
+			if err := mount.MakeRSlave("/"); err != nil {
+				return err
+			}
 
 			return mounttree.SwitchRoot(path)
 		},

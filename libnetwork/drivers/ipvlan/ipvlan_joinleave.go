@@ -1,15 +1,18 @@
+//go:build linux
+// +build linux
+
 package ipvlan
 
 import (
 	"fmt"
 	"net"
 
-	"github.com/Sirupsen/logrus"
-	"github.com/docker/libnetwork/driverapi"
-	"github.com/docker/libnetwork/netutils"
-	"github.com/docker/libnetwork/ns"
-	"github.com/docker/libnetwork/osl"
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/driverapi"
+	"github.com/docker/docker/libnetwork/netutils"
+	"github.com/docker/docker/libnetwork/ns"
+	"github.com/docker/docker/libnetwork/osl"
+	"github.com/docker/docker/libnetwork/types"
+	"github.com/sirupsen/logrus"
 )
 
 type staticRoute struct {
@@ -40,7 +43,7 @@ func (d *driver) Join(nid, eid string, sboxKey string, jinfo driverapi.JoinInfo,
 		return fmt.Errorf("error generating an interface name: %v", err)
 	}
 	// create the netlink ipvlan interface
-	vethName, err := createIPVlan(containerIfName, n.config.Parent, n.config.IpvlanMode)
+	vethName, err := createIPVlan(containerIfName, n.config.Parent, n.config.IpvlanMode, n.config.IpvlanFlag)
 	if err != nil {
 		return err
 	}
@@ -50,65 +53,76 @@ func (d *driver) Join(nid, eid string, sboxKey string, jinfo driverapi.JoinInfo,
 	if ep == nil {
 		return fmt.Errorf("could not find endpoint with id %s", eid)
 	}
-	if n.config.IpvlanMode == modeL3 {
-		// disable gateway services to add a default gw using dev eth0 only
-		jinfo.DisableGatewayService()
-		defaultRoute, err := ifaceGateway(defaultV4RouteCidr)
-		if err != nil {
-			return err
-		}
-		if err := jinfo.AddStaticRoute(defaultRoute.Destination, defaultRoute.RouteType, defaultRoute.NextHop); err != nil {
-			return fmt.Errorf("failed to set an ipvlan l3 mode ipv4 default gateway: %v", err)
-		}
-		logrus.Debugf("Ipvlan Endpoint Joined with IPv4_Addr: %s, Ipvlan_Mode: %s, Parent: %s",
-			ep.addr.IP.String(), n.config.IpvlanMode, n.config.Parent)
-		// If the endpoint has a v6 address, set a v6 default route
-		if ep.addrv6 != nil {
-			default6Route, err := ifaceGateway(defaultV6RouteCidr)
+	if !n.config.Internal {
+		switch n.config.IpvlanMode {
+		case modeL3, modeL3S:
+			// disable gateway services to add a default gw using dev eth0 only
+			jinfo.DisableGatewayService()
+			defaultRoute, err := ifaceGateway(defaultV4RouteCidr)
 			if err != nil {
 				return err
 			}
-			if err = jinfo.AddStaticRoute(default6Route.Destination, default6Route.RouteType, default6Route.NextHop); err != nil {
-				return fmt.Errorf("failed to set an ipvlan l3 mode ipv6 default gateway: %v", err)
+			if err := jinfo.AddStaticRoute(defaultRoute.Destination, defaultRoute.RouteType, defaultRoute.NextHop); err != nil {
+				return fmt.Errorf("failed to set an ipvlan l3/l3s mode ipv4 default gateway: %v", err)
 			}
-			logrus.Debugf("Ipvlan Endpoint Joined with IPv6_Addr: %s, Ipvlan_Mode: %s, Parent: %s",
-				ep.addrv6.IP.String(), n.config.IpvlanMode, n.config.Parent)
+			logrus.Debugf("Ipvlan Endpoint Joined with IPv4_Addr: %s, Ipvlan_Mode: %s, Parent: %s",
+				ep.addr.IP.String(), n.config.IpvlanMode, n.config.Parent)
+			// If the endpoint has a v6 address, set a v6 default route
+			if ep.addrv6 != nil {
+				default6Route, err := ifaceGateway(defaultV6RouteCidr)
+				if err != nil {
+					return err
+				}
+				if err = jinfo.AddStaticRoute(default6Route.Destination, default6Route.RouteType, default6Route.NextHop); err != nil {
+					return fmt.Errorf("failed to set an ipvlan l3/l3s mode ipv6 default gateway: %v", err)
+				}
+				logrus.Debugf("Ipvlan Endpoint Joined with IPv6_Addr: %s, Ipvlan_Mode: %s, Parent: %s",
+					ep.addrv6.IP.String(), n.config.IpvlanMode, n.config.Parent)
+			}
+		case modeL2:
+			// parse and correlate the endpoint v4 address with the available v4 subnets
+			if len(n.config.Ipv4Subnets) > 0 {
+				s := n.getSubnetforIPv4(ep.addr)
+				if s == nil {
+					return fmt.Errorf("could not find a valid ipv4 subnet for endpoint %s", eid)
+				}
+				v4gw, _, err := net.ParseCIDR(s.GwIP)
+				if err != nil {
+					return fmt.Errorf("gateway %s is not a valid ipv4 address: %v", s.GwIP, err)
+				}
+				err = jinfo.SetGateway(v4gw)
+				if err != nil {
+					return err
+				}
+				logrus.Debugf("Ipvlan Endpoint Joined with IPv4_Addr: %s, Gateway: %s, Ipvlan_Mode: %s, Parent: %s",
+					ep.addr.IP.String(), v4gw.String(), n.config.IpvlanMode, n.config.Parent)
+			}
+			// parse and correlate the endpoint v6 address with the available v6 subnets
+			if len(n.config.Ipv6Subnets) > 0 {
+				s := n.getSubnetforIPv6(ep.addrv6)
+				if s == nil {
+					return fmt.Errorf("could not find a valid ipv6 subnet for endpoint %s", eid)
+				}
+				v6gw, _, err := net.ParseCIDR(s.GwIP)
+				if err != nil {
+					return fmt.Errorf("gateway %s is not a valid ipv6 address: %v", s.GwIP, err)
+				}
+				err = jinfo.SetGatewayIPv6(v6gw)
+				if err != nil {
+					return err
+				}
+				logrus.Debugf("Ipvlan Endpoint Joined with IPv6_Addr: %s, Gateway: %s, Ipvlan_Mode: %s, Parent: %s",
+					ep.addrv6.IP.String(), v6gw.String(), n.config.IpvlanMode, n.config.Parent)
+			}
 		}
-	}
-	if n.config.IpvlanMode == modeL2 {
-		// parse and correlate the endpoint v4 address with the available v4 subnets
+	} else {
 		if len(n.config.Ipv4Subnets) > 0 {
-			s := n.getSubnetforIPv4(ep.addr)
-			if s == nil {
-				return fmt.Errorf("could not find a valid ipv4 subnet for endpoint %s", eid)
-			}
-			v4gw, _, err := net.ParseCIDR(s.GwIP)
-			if err != nil {
-				return fmt.Errorf("gatway %s is not a valid ipv4 address: %v", s.GwIP, err)
-			}
-			err = jinfo.SetGateway(v4gw)
-			if err != nil {
-				return err
-			}
-			logrus.Debugf("Ipvlan Endpoint Joined with IPv4_Addr: %s, Gateway: %s, Ipvlan_Mode: %s, Parent: %s",
-				ep.addr.IP.String(), v4gw.String(), n.config.IpvlanMode, n.config.Parent)
+			logrus.Debugf("Ipvlan Endpoint Joined with IPv4_Addr: %s, IpVlan_Mode: %s, Parent: %s",
+				ep.addr.IP.String(), n.config.IpvlanMode, n.config.Parent)
 		}
-		// parse and correlate the endpoint v6 address with the available v6 subnets
 		if len(n.config.Ipv6Subnets) > 0 {
-			s := n.getSubnetforIPv6(ep.addrv6)
-			if s == nil {
-				return fmt.Errorf("could not find a valid ipv6 subnet for endpoint %s", eid)
-			}
-			v6gw, _, err := net.ParseCIDR(s.GwIP)
-			if err != nil {
-				return fmt.Errorf("gatway %s is not a valid ipv6 address: %v", s.GwIP, err)
-			}
-			err = jinfo.SetGatewayIPv6(v6gw)
-			if err != nil {
-				return err
-			}
-			logrus.Debugf("Ipvlan Endpoint Joined with IPv6_Addr: %s, Gateway: %s, Ipvlan_Mode: %s, Parent: %s",
-				ep.addrv6.IP.String(), v6gw.String(), n.config.IpvlanMode, n.config.Parent)
+			logrus.Debugf("Ipvlan Endpoint Joined with IPv6_Addr: %s IpVlan_Mode: %s, Parent: %s",
+				ep.addrv6.IP.String(), n.config.IpvlanMode, n.config.Parent)
 		}
 	}
 	iNames := jinfo.InterfaceName()
@@ -117,7 +131,7 @@ func (d *driver) Join(nid, eid string, sboxKey string, jinfo driverapi.JoinInfo,
 		return err
 	}
 	if err = d.storeUpdate(ep); err != nil {
-		return fmt.Errorf("failed to save ipvlan endpoint %s to store: %v", ep.id[0:7], err)
+		return fmt.Errorf("failed to save ipvlan endpoint %.7s to store: %v", ep.id, err)
 	}
 
 	return nil
@@ -157,29 +171,17 @@ func ifaceGateway(dfNet string) (*staticRoute, error) {
 }
 
 // getSubnetforIPv4 returns the ipv4 subnet to which the given IP belongs
-func (n *network) getSubnetforIPv4(ip *net.IPNet) *ipv4Subnet {
-	for _, s := range n.config.Ipv4Subnets {
-		_, snet, err := net.ParseCIDR(s.SubnetIP)
-		if err != nil {
-			return nil
-		}
-		// first check if the mask lengths are the same
-		i, _ := snet.Mask.Size()
-		j, _ := ip.Mask.Size()
-		if i != j {
-			continue
-		}
-		if snet.Contains(ip.IP) {
-			return s
-		}
-	}
-
-	return nil
+func (n *network) getSubnetforIPv4(ip *net.IPNet) *ipSubnet {
+	return getSubnetForIP(ip, n.config.Ipv4Subnets)
 }
 
 // getSubnetforIPv6 returns the ipv6 subnet to which the given IP belongs
-func (n *network) getSubnetforIPv6(ip *net.IPNet) *ipv6Subnet {
-	for _, s := range n.config.Ipv6Subnets {
+func (n *network) getSubnetforIPv6(ip *net.IPNet) *ipSubnet {
+	return getSubnetForIP(ip, n.config.Ipv6Subnets)
+}
+
+func getSubnetForIP(ip *net.IPNet, subnets []*ipSubnet) *ipSubnet {
+	for _, s := range subnets {
 		_, snet, err := net.ParseCIDR(s.SubnetIP)
 		if err != nil {
 			return nil

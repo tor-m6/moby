@@ -1,3 +1,4 @@
+//go:build linux || windows
 // +build linux windows
 
 package libnetwork
@@ -5,9 +6,11 @@ package libnetwork
 import (
 	"net"
 
-	"github.com/Sirupsen/logrus"
-	"github.com/docker/libnetwork/common"
+	"github.com/docker/docker/libnetwork/internal/setmatrix"
+	"github.com/sirupsen/logrus"
 )
+
+const maxSetStringLen = 350
 
 func (c *controller) addEndpointNameResolution(svcName, svcID, nID, eID, containerName string, vip net.IP, serviceAliases, taskAliases []string, ip net.IP, addService bool, method string) error {
 	n, err := c.NetworkByID(nID)
@@ -18,7 +21,9 @@ func (c *controller) addEndpointNameResolution(svcName, svcID, nID, eID, contain
 	logrus.Debugf("addEndpointNameResolution %s %s add_service:%t sAliases:%v tAliases:%v", eID, svcName, addService, serviceAliases, taskAliases)
 
 	// Add container resolution mappings
-	c.addContainerNameResolution(nID, eID, containerName, taskAliases, ip, method)
+	if err := c.addContainerNameResolution(nID, eID, containerName, taskAliases, ip, method); err != nil {
+		return err
+	}
 
 	serviceID := svcID
 	if serviceID == "" {
@@ -62,7 +67,7 @@ func (c *controller) addContainerNameResolution(nID, eID, containerName string, 
 
 	// Add resolution for taskaliases
 	for _, alias := range taskAliases {
-		n.(*network).addSvcRecords(eID, alias, eID, ip, nil, true, method)
+		n.(*network).addSvcRecords(eID, alias, eID, ip, nil, false, method)
 	}
 
 	return nil
@@ -77,7 +82,9 @@ func (c *controller) deleteEndpointNameResolution(svcName, svcID, nID, eID, cont
 	logrus.Debugf("deleteEndpointNameResolution %s %s rm_service:%t suppress:%t sAliases:%v tAliases:%v", eID, svcName, rmService, multipleEntries, serviceAliases, taskAliases)
 
 	// Delete container resolution mappings
-	c.delContainerNameResolution(nID, eID, containerName, taskAliases, ip, method)
+	if err := c.delContainerNameResolution(nID, eID, containerName, taskAliases, ip, method); err != nil {
+		logrus.WithError(err).Warn("Error delting container from resolver")
+	}
 
 	serviceID := svcID
 	if serviceID == "" {
@@ -137,7 +144,7 @@ func newService(name string, id string, ingressPorts []*PortConfig, serviceAlias
 		ingressPorts:  ingressPorts,
 		loadBalancers: make(map[string]*loadBalancer),
 		aliases:       serviceAliases,
-		ipToEndpoint:  common.NewSetMatrix(),
+		ipToEndpoint:  setmatrix.NewSetMatrix(),
 	}
 }
 
@@ -206,7 +213,6 @@ func (c *controller) cleanupServiceBindings(cleanupNID string) {
 	for _, f := range cleanupFuncs {
 		f()
 	}
-
 }
 
 func makeServiceCleanupFunc(c *controller, s *service, nID, eID string, vip net.IP, ip net.IP) func() {
@@ -222,6 +228,13 @@ func makeServiceCleanupFunc(c *controller, s *service, nID, eID string, vip net.
 
 func (c *controller) addServiceBinding(svcName, svcID, nID, eID, containerName string, vip net.IP, ingressPorts []*PortConfig, serviceAliases, taskAliases []string, ip net.IP, method string) error {
 	var addService bool
+
+	// Failure to lock the network ID on add can result in racing
+	// racing against network deletion resulting in inconsistent
+	// state in the c.serviceBindings map and it's sub-maps. Also,
+	// always lock network ID before services to avoid deadlock.
+	c.networkLocker.Lock(nID)
+	defer c.networkLocker.Unlock(nID) //nolint:errcheck
 
 	n, err := c.NetworkByID(nID)
 	if err != nil {
@@ -281,17 +294,19 @@ func (c *controller) addServiceBinding(svcName, svcID, nID, eID, containerName s
 	ok, entries := s.assignIPToEndpoint(ip.String(), eID)
 	if !ok || entries > 1 {
 		setStr, b := s.printIPToEndpoint(ip.String())
-		logrus.Warnf("addServiceBinding %s possible trainsient state ok:%t entries:%d set:%t %s", eID, ok, entries, b, setStr)
+		if len(setStr) > maxSetStringLen {
+			setStr = setStr[:maxSetStringLen]
+		}
+		logrus.Warnf("addServiceBinding %s possible transient state ok:%t entries:%d set:%t %s", eID, ok, entries, b, setStr)
 	}
 
-	// Add loadbalancer service and backend in all sandboxes in
-	// the network only if vip is valid.
-	if len(vip) != 0 {
-		n.(*network).addLBBackend(ip, vip, lb.fwMark, ingressPorts)
-	}
+	// Add loadbalancer service and backend to the network
+	n.(*network).addLBBackend(ip, lb)
 
 	// Add the appropriate name resolutions
-	c.addEndpointNameResolution(svcName, svcID, nID, eID, containerName, vip, serviceAliases, taskAliases, ip, addService, "addServiceBinding")
+	if err := c.addEndpointNameResolution(svcName, svcID, nID, eID, containerName, vip, serviceAliases, taskAliases, ip, addService, "addServiceBinding"); err != nil {
+		return err
+	}
 
 	logrus.Debugf("addServiceBinding from %s END for %s %s", method, svcName, eID)
 
@@ -299,13 +314,7 @@ func (c *controller) addServiceBinding(svcName, svcID, nID, eID, containerName s
 }
 
 func (c *controller) rmServiceBinding(svcName, svcID, nID, eID, containerName string, vip net.IP, ingressPorts []*PortConfig, serviceAliases []string, taskAliases []string, ip net.IP, method string, deleteSvcRecords bool, fullRemove bool) error {
-
 	var rmService bool
-
-	n, err := c.NetworkByID(nID)
-	if err != nil {
-		return err
-	}
 
 	skey := serviceKey{
 		id:    svcID,
@@ -355,18 +364,35 @@ func (c *controller) rmServiceBinding(svcName, svcID, nID, eID, containerName st
 	ok, entries := s.removeIPToEndpoint(ip.String(), eID)
 	if !ok || entries > 0 {
 		setStr, b := s.printIPToEndpoint(ip.String())
-		logrus.Warnf("rmServiceBinding %s possible trainsient state ok:%t entries:%d set:%t %s", eID, ok, entries, b, setStr)
+		if len(setStr) > maxSetStringLen {
+			setStr = setStr[:maxSetStringLen]
+		}
+		logrus.Warnf("rmServiceBinding %s possible transient state ok:%t entries:%d set:%t %s", eID, ok, entries, b, setStr)
 	}
 
 	// Remove loadbalancer service(if needed) and backend in all
 	// sandboxes in the network only if the vip is valid.
-	if len(vip) != 0 && entries == 0 {
-		n.(*network).rmLBBackend(ip, vip, lb, ingressPorts, rmService, fullRemove)
+	if entries == 0 {
+		// The network may well have been deleted from the store (and
+		// dataplane) before the last of the service bindings.  On Linux that's
+		// ok because removing the network sandbox from the dataplane
+		// implicitly cleans up all related dataplane state.
+		// On the Windows dataplane, VFP policylists must be removed
+		// independently of the network, and they must be removed before the HNS
+		// network. Otherwise, policylist removal fails with "network not
+		// found." On Windows cleanupServiceBindings must be called prior to
+		// removing the network from the store or dataplane.
+		n, err := c.NetworkByID(nID)
+		if err == nil {
+			n.(*network).rmLBBackend(ip, lb, rmService, fullRemove)
+		}
 	}
 
 	// Delete the name resolutions
 	if deleteSvcRecords {
-		c.deleteEndpointNameResolution(svcName, svcID, nID, eID, containerName, vip, serviceAliases, taskAliases, ip, rmService, entries > 0, "rmServiceBinding")
+		if err := c.deleteEndpointNameResolution(svcName, svcID, nID, eID, containerName, vip, serviceAliases, taskAliases, ip, rmService, entries > 0, "rmServiceBinding"); err != nil {
+			return err
+		}
 	}
 
 	if len(s.loadBalancers) == 0 {

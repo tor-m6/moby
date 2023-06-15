@@ -1,10 +1,10 @@
 package plugin // import "github.com/docker/docker/plugin"
 
 import (
-	// "strings"
+	"fmt"
+	"strings"
 	"sync"
 
-	"github.com/docker/docker/mystrings"
 	"github.com/docker/docker/pkg/plugins"
 	v2 "github.com/docker/docker/plugin/v2"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
@@ -56,13 +56,15 @@ func WithEnv(env []string) CreateOpt {
 			}
 		}
 		for _, line := range env {
-			if k, v, ok := mystrings.Cut(line, "="); ok {
-				effectiveEnv[k] = v
+			if pair := strings.SplitN(line, "=", 2); len(pair) > 1 {
+				effectiveEnv[pair[0]] = pair[1]
 			}
 		}
-		p.PluginObj.Settings.Env = make([]string, 0, len(effectiveEnv))
+		p.PluginObj.Settings.Env = make([]string, len(effectiveEnv))
+		i := 0
 		for key, value := range effectiveEnv {
-			p.PluginObj.Settings.Env = append(p.PluginObj.Settings.Env, key+"="+value)
+			p.PluginObj.Settings.Env[i] = fmt.Sprintf("%s=%s", key, value)
+			i++
 		}
 	}
 }

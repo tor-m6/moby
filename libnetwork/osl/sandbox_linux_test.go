@@ -13,8 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/libnetwork/testutils"
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/ns"
+	"github.com/docker/docker/libnetwork/testutils"
+	"github.com/docker/docker/libnetwork/types"
+	"github.com/docker/docker/pkg/reexec"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netlink/nl"
 	"github.com/vishvananda/netns"
@@ -119,7 +121,7 @@ func newInfo(hnd *netlink.Handle, t *testing.T) (Sandbox, error) {
 func verifySandbox(t *testing.T, s Sandbox, ifaceSuffixes []string) {
 	_, ok := s.(*networkNamespace)
 	if !ok {
-		t.Fatalf("The sandox interface returned is not of type networkNamespace")
+		t.Fatalf("The sandbox interface returned is not of type networkNamespace")
 	}
 
 	sbNs, err := netns.GetFromPath(s.Key())
@@ -132,7 +134,7 @@ func verifySandbox(t *testing.T, s Sandbox, ifaceSuffixes []string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer nh.Delete()
+	defer nh.Close()
 
 	for _, suffix := range ifaceSuffixes {
 		_, err = nh.LinkByName(sboxIfaceName + suffix)
@@ -145,7 +147,7 @@ func verifySandbox(t *testing.T, s Sandbox, ifaceSuffixes []string) {
 
 func verifyCleanup(t *testing.T, s Sandbox, wait bool) {
 	if wait {
-		time.Sleep(time.Duration(gpmCleanupPeriod * 2))
+		time.Sleep(gpmCleanupPeriod * 2)
 	}
 
 	if _, err := os.Stat(s.Key()); err == nil {
@@ -184,10 +186,6 @@ func TestScanStatistics(t *testing.T) {
 }
 
 func TestDisableIPv6DAD(t *testing.T) {
-	if testutils.RunningOnCircleCI() {
-		t.Skipf("Skipping as not supported on CIRCLE CI kernel")
-	}
-
 	defer testutils.SetupTestOSContext(t)()
 
 	key, err := newKey(t)
@@ -200,7 +198,7 @@ func TestDisableIPv6DAD(t *testing.T) {
 		t.Fatalf("Failed to create a new sandbox: %v", err)
 	}
 	runtime.LockOSThread()
-	defer s.Destroy()
+	defer destroyTest(t, s)
 
 	n, ok := s.(*networkNamespace)
 	if !ok {
@@ -241,6 +239,12 @@ func TestDisableIPv6DAD(t *testing.T) {
 	}
 }
 
+func destroyTest(t *testing.T, s Sandbox) {
+	if err := s.Destroy(); err != nil {
+		t.Log(err)
+	}
+}
+
 func TestSetInterfaceIP(t *testing.T) {
 	defer testutils.SetupTestOSContext(t)()
 
@@ -254,7 +258,7 @@ func TestSetInterfaceIP(t *testing.T) {
 		t.Fatalf("Failed to create a new sandbox: %v", err)
 	}
 	runtime.LockOSThread()
-	defer s.Destroy()
+	defer destroyTest(t, s)
 
 	n, ok := s.(*networkNamespace)
 	if !ok {
@@ -317,7 +321,6 @@ func TestSetInterfaceIP(t *testing.T) {
 }
 
 func TestLiveRestore(t *testing.T) {
-
 	defer testutils.SetupTestOSContext(t)()
 
 	key, err := newKey(t)
@@ -330,7 +333,7 @@ func TestLiveRestore(t *testing.T) {
 		t.Fatalf("Failed to create a new sandbox: %v", err)
 	}
 	runtime.LockOSThread()
-	defer s.Destroy()
+	defer destroyTest(t, s)
 
 	n, ok := s.(*networkNamespace)
 	if !ok {
@@ -396,6 +399,7 @@ func TestLiveRestore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create a new sandbox: %v", err)
 	}
+	defer destroyTest(t, s)
 
 	// Check if the IPV4 & IPV6 entry present
 	// If present , we should get error in below call
@@ -406,4 +410,173 @@ func TestLiveRestore(t *testing.T) {
 	if err := setInterfaceIP(nlh, linkA, iface); err == nil {
 		t.Fatalf("Expected route conflict error, but succeeded for IPV4 ")
 	}
+}
+
+func TestMain(m *testing.M) {
+	if reexec.Init() {
+		return
+	}
+	os.Exit(m.Run())
+}
+
+func TestSandboxCreate(t *testing.T) {
+	defer testutils.SetupTestOSContext(t)()
+
+	key, err := newKey(t)
+	if err != nil {
+		t.Fatalf("Failed to obtain a key: %v", err)
+	}
+
+	s, err := NewSandbox(key, true, false)
+	if err != nil {
+		t.Fatalf("Failed to create a new sandbox: %v", err)
+	}
+
+	if s.Key() != key {
+		t.Fatalf("s.Key() returned %s. Expected %s", s.Key(), key)
+	}
+
+	tbox, err := newInfo(ns.NlHandle(), t)
+	if err != nil {
+		t.Fatalf("Failed to generate new sandbox info: %v", err)
+	}
+
+	for _, i := range tbox.Info().Interfaces() {
+		err = s.AddInterface(i.SrcName(), i.DstName(),
+			tbox.InterfaceOptions().Bridge(i.Bridge()),
+			tbox.InterfaceOptions().Address(i.Address()),
+			tbox.InterfaceOptions().AddressIPv6(i.AddressIPv6()))
+		if err != nil {
+			t.Fatalf("Failed to add interfaces to sandbox: %v", err)
+		}
+	}
+
+	err = s.SetGateway(tbox.Info().Gateway())
+	if err != nil {
+		t.Fatalf("Failed to set gateway to sandbox: %v", err)
+	}
+
+	err = s.SetGatewayIPv6(tbox.Info().GatewayIPv6())
+	if err != nil {
+		t.Fatalf("Failed to set ipv6 gateway to sandbox: %v", err)
+	}
+
+	verifySandbox(t, s, []string{"0", "1", "2"})
+
+	err = s.Destroy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifyCleanup(t, s, true)
+}
+
+func TestSandboxCreateTwice(t *testing.T) {
+	defer testutils.SetupTestOSContext(t)()
+
+	key, err := newKey(t)
+	if err != nil {
+		t.Fatalf("Failed to obtain a key: %v", err)
+	}
+
+	_, err = NewSandbox(key, true, false)
+	if err != nil {
+		t.Fatalf("Failed to create a new sandbox: %v", err)
+	}
+	runtime.LockOSThread()
+
+	// Create another sandbox with the same key to see if we handle it
+	// gracefully.
+	s, err := NewSandbox(key, true, false)
+	if err != nil {
+		t.Fatalf("Failed to create a new sandbox: %v", err)
+	}
+	runtime.LockOSThread()
+
+	err = s.Destroy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	GC()
+	verifyCleanup(t, s, false)
+}
+
+func TestSandboxGC(t *testing.T) {
+	key, err := newKey(t)
+	if err != nil {
+		t.Fatalf("Failed to obtain a key: %v", err)
+	}
+
+	s, err := NewSandbox(key, true, false)
+	if err != nil {
+		t.Fatalf("Failed to create a new sandbox: %v", err)
+	}
+
+	err = s.Destroy()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	GC()
+	verifyCleanup(t, s, false)
+}
+
+func TestAddRemoveInterface(t *testing.T) {
+	defer testutils.SetupTestOSContext(t)()
+
+	key, err := newKey(t)
+	if err != nil {
+		t.Fatalf("Failed to obtain a key: %v", err)
+	}
+
+	s, err := NewSandbox(key, true, false)
+	if err != nil {
+		t.Fatalf("Failed to create a new sandbox: %v", err)
+	}
+	runtime.LockOSThread()
+
+	if s.Key() != key {
+		t.Fatalf("s.Key() returned %s. Expected %s", s.Key(), key)
+	}
+
+	tbox, err := newInfo(ns.NlHandle(), t)
+	if err != nil {
+		t.Fatalf("Failed to generate new sandbox info: %v", err)
+	}
+
+	for _, i := range tbox.Info().Interfaces() {
+		err = s.AddInterface(i.SrcName(), i.DstName(),
+			tbox.InterfaceOptions().Bridge(i.Bridge()),
+			tbox.InterfaceOptions().Address(i.Address()),
+			tbox.InterfaceOptions().AddressIPv6(i.AddressIPv6()))
+		if err != nil {
+			t.Fatalf("Failed to add interfaces to sandbox: %v", err)
+		}
+	}
+
+	verifySandbox(t, s, []string{"0", "1", "2"})
+
+	interfaces := s.Info().Interfaces()
+	if err := interfaces[0].Remove(); err != nil {
+		t.Fatalf("Failed to remove interfaces from sandbox: %v", err)
+	}
+
+	verifySandbox(t, s, []string{"1", "2"})
+
+	i := tbox.Info().Interfaces()[0]
+	if err := s.AddInterface(i.SrcName(), i.DstName(),
+		tbox.InterfaceOptions().Bridge(i.Bridge()),
+		tbox.InterfaceOptions().Address(i.Address()),
+		tbox.InterfaceOptions().AddressIPv6(i.AddressIPv6())); err != nil {
+		t.Fatalf("Failed to add interfaces to sandbox: %v", err)
+	}
+
+	verifySandbox(t, s, []string{"1", "2", "3"})
+
+	err = s.Destroy()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	GC()
+	verifyCleanup(t, s, false)
 }

@@ -1,15 +1,18 @@
+//go:build linux
+// +build linux
+
 package macvlan
 
 import (
 	"fmt"
 
-	"github.com/Sirupsen/logrus"
-	"github.com/docker/libnetwork/driverapi"
-	"github.com/docker/libnetwork/netlabel"
-	"github.com/docker/libnetwork/netutils"
-	"github.com/docker/libnetwork/ns"
-	"github.com/docker/libnetwork/osl"
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/driverapi"
+	"github.com/docker/docker/libnetwork/netlabel"
+	"github.com/docker/docker/libnetwork/netutils"
+	"github.com/docker/docker/libnetwork/ns"
+	"github.com/docker/docker/libnetwork/osl"
+	"github.com/docker/docker/libnetwork/types"
+	"github.com/sirupsen/logrus"
 )
 
 // CreateEndpoint assigns the mac, ip and endpoint id for the new container
@@ -44,7 +47,7 @@ func (d *driver) CreateEndpoint(nid, eid string, ifInfo driverapi.InterfaceInfo,
 	if opt, ok := epOptions[netlabel.PortMap]; ok {
 		if _, ok := opt.([]types.PortBinding); ok {
 			if len(opt.([]types.PortBinding)) > 0 {
-				logrus.Warnf("%s driver does not support port mappings", macvlanType)
+				logrus.Warnf("macvlan driver does not support port mappings")
 			}
 		}
 	}
@@ -52,13 +55,13 @@ func (d *driver) CreateEndpoint(nid, eid string, ifInfo driverapi.InterfaceInfo,
 	if opt, ok := epOptions[netlabel.ExposedPorts]; ok {
 		if _, ok := opt.([]types.TransportPort); ok {
 			if len(opt.([]types.TransportPort)) > 0 {
-				logrus.Warnf("%s driver does not support port exposures", macvlanType)
+				logrus.Warnf("macvlan driver does not support port exposures")
 			}
 		}
 	}
 
 	if err := d.storeUpdate(ep); err != nil {
-		return fmt.Errorf("failed to save macvlan endpoint %s to store: %v", ep.id[0:7], err)
+		return fmt.Errorf("failed to save macvlan endpoint %.7s to store: %v", ep.id, err)
 	}
 
 	n.addEndpoint(ep)
@@ -81,11 +84,13 @@ func (d *driver) DeleteEndpoint(nid, eid string) error {
 		return fmt.Errorf("endpoint id %q not found", eid)
 	}
 	if link, err := ns.NlHandle().LinkByName(ep.srcName); err == nil {
-		ns.NlHandle().LinkDel(link)
+		if err := ns.NlHandle().LinkDel(link); err != nil {
+			logrus.WithError(err).Warnf("Failed to delete interface (%s)'s link on endpoint (%s) delete", ep.srcName, ep.id)
+		}
 	}
 
 	if err := d.storeDelete(ep); err != nil {
-		logrus.Warnf("Failed to remove macvlan endpoint %s from store: %v", ep.id[0:7], err)
+		logrus.Warnf("Failed to remove macvlan endpoint %.7s from store: %v", ep.id, err)
 	}
 
 	n.deleteEndpoint(ep.id)

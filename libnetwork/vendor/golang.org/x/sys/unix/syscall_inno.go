@@ -73,3 +73,95 @@ func Flock(fd int, how int) (err error) {
 	return
 }
 
+// SockaddrNetlink implements the Sockaddr interface for AF_NETLINK type sockets.
+type SockaddrNetlink struct {
+	Family uint16
+	Pad    uint16
+	Pid    uint32
+	Groups uint32
+	raw    RawSockaddrNetlink
+}
+
+// NetlinkMessage represents a netlink message.
+type NetlinkMessage struct {
+	Header NlMsghdr
+	Data   []byte
+}
+
+// ParseNetlinkMessage parses b as an array of netlink messages and
+// returns the slice containing the NetlinkMessage structures.
+func ParseNetlinkMessage(b []byte) ([]NetlinkMessage, error) {
+	var msgs []NetlinkMessage
+	for len(b) >= NLMSG_HDRLEN {
+		h, dbuf, dlen, err := netlinkMessageHeaderAndData(b)
+		if err != nil {
+			return nil, err
+		}
+		m := NetlinkMessage{Header: *h, Data: dbuf[:int(h.Len)-NLMSG_HDRLEN]}
+		msgs = append(msgs, m)
+		b = b[dlen:]
+	}
+	return msgs, nil
+}
+
+func netlinkMessageHeaderAndData(b []byte) (*NlMsghdr, []byte, int, error) {
+	h := (*NlMsghdr)(unsafe.Pointer(&b[0]))
+	l := nlmAlignOf(int(h.Len))
+	if int(h.Len) < NLMSG_HDRLEN || l > len(b) {
+		return nil, nil, 0, EINVAL
+	}
+	return h, b[NLMSG_HDRLEN:], l, nil
+}
+
+// Round the length of a netlink message up to align it properly.
+func nlmAlignOf(msglen int) int {
+	return (msglen + NLMSG_ALIGNTO - 1) & ^(NLMSG_ALIGNTO - 1)
+}
+
+// Round the length of a netlink route attribute up to align it
+// properly.
+func rtaAlignOf(attrlen int) int {
+	return (attrlen + RTA_ALIGNTO - 1) & ^(RTA_ALIGNTO - 1)
+}
+
+// NetlinkRouteAttr represents a netlink route attribute.
+type NetlinkRouteAttr struct {
+	Attr  RtAttr
+	Value []byte
+}
+
+// ParseNetlinkRouteAttr parses m's payload as an array of netlink
+// route attributes and returns the slice containing the
+// NetlinkRouteAttr structures.
+func ParseNetlinkRouteAttr(m *NetlinkMessage) ([]NetlinkRouteAttr, error) {
+	var b []byte
+	switch m.Header.Type {
+	case RTM_NEWLINK, RTM_DELLINK:
+		b = m.Data[SizeofIfInfomsg:]
+	case RTM_NEWADDR, RTM_DELADDR:
+		b = m.Data[SizeofIfAddrmsg:]
+	case RTM_NEWROUTE, RTM_DELROUTE:
+		b = m.Data[SizeofRtMsg:]
+	default:
+		return nil, EINVAL
+	}
+	var attrs []NetlinkRouteAttr
+	for len(b) >= SizeofRtAttr {
+		a, vbuf, alen, err := netlinkRouteAttrAndValue(b)
+		if err != nil {
+			return nil, err
+		}
+		ra := NetlinkRouteAttr{Attr: *a, Value: vbuf[:int(a.Len)-SizeofRtAttr]}
+		attrs = append(attrs, ra)
+		b = b[alen:]
+	}
+	return attrs, nil
+}
+
+func netlinkRouteAttrAndValue(b []byte) (*RtAttr, []byte, int, error) {
+	a := (*RtAttr)(unsafe.Pointer(&b[0]))
+	if int(a.Len) < SizeofRtAttr || int(a.Len) > len(b) {
+		return nil, nil, 0, EINVAL
+	}
+	return a, b[SizeofRtAttr:], rtaAlignOf(int(a.Len)), nil
+}

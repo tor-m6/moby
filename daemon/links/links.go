@@ -94,15 +94,15 @@ func (l *Link) ToEnv() []string {
 
 	if l.ChildEnvironment != nil {
 		for _, v := range l.ChildEnvironment {
-			name, val, ok := strings.Cut(v, "=")
-			if !ok {
+			parts := strings.SplitN(v, "=", 2)
+			if len(parts) < 2 {
 				continue
 			}
 			// Ignore a few variables that are added during docker build (and not really relevant to linked containers)
-			if name == "HOME" || name == "PATH" {
+			if parts[0] == "HOME" || parts[0] == "PATH" {
 				continue
 			}
-			env = append(env, fmt.Sprintf("%s_ENV_%s=%s", alias, name, val))
+			env = append(env, fmt.Sprintf("%s_ENV_%s=%s", alias, parts[0], parts[1]))
 		}
 	}
 	return env

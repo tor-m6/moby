@@ -1,13 +1,16 @@
+//go:build linux
+// +build linux
+
 package bridge
 
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
 	"net"
+	"os"
 	"testing"
 
-	"github.com/docker/libnetwork/testutils"
+	"github.com/docker/docker/libnetwork/testutils"
 	"github.com/vishvananda/netlink"
 )
 
@@ -18,19 +21,19 @@ func TestSetupIPv6(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer nh.Delete()
+	defer nh.Close()
 
 	config, br := setupTestInterface(t, nh)
 	if err := setupBridgeIPv6(config, br); err != nil {
 		t.Fatalf("Failed to setup bridge IPv6: %v", err)
 	}
 
-	procSetting, err := ioutil.ReadFile(fmt.Sprintf("/proc/sys/net/ipv6/conf/%s/disable_ipv6", config.BridgeName))
+	procSetting, err := os.ReadFile(fmt.Sprintf("/proc/sys/net/ipv6/conf/%s/disable_ipv6", config.BridgeName))
 	if err != nil {
 		t.Fatalf("Failed to read disable_ipv6 kernel setting: %v", err)
 	}
 
-	if expected := []byte("0\n"); bytes.Compare(expected, procSetting) != 0 {
+	if expected := []byte("0\n"); !bytes.Equal(expected, procSetting) {
 		t.Fatalf("Invalid kernel setting disable_ipv6: expected %q, got %q", string(expected), string(procSetting))
 	}
 
@@ -41,16 +44,15 @@ func TestSetupIPv6(t *testing.T) {
 
 	var found bool
 	for _, addr := range addrsv6 {
-		if bridgeIPv6Str == addr.IPNet.String() {
+		if bridgeIPv6.String() == addr.IPNet.String() {
 			found = true
 			break
 		}
 	}
 
 	if !found {
-		t.Fatalf("Bridge device does not have requested IPv6 address %v", bridgeIPv6Str)
+		t.Fatalf("Bridge device does not have requested IPv6 address %v", bridgeIPv6)
 	}
-
 }
 
 func TestSetupGatewayIPv6(t *testing.T) {
@@ -68,7 +70,7 @@ func TestSetupGatewayIPv6(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer nh.Delete()
+	defer nh.Close()
 
 	br := &bridgeInterface{nlh: nh}
 

@@ -3,9 +3,9 @@ package ipam
 import (
 	"encoding/json"
 
-	"github.com/Sirupsen/logrus"
-	"github.com/docker/libnetwork/datastore"
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/datastore"
+	"github.com/docker/docker/libnetwork/types"
+	"github.com/sirupsen/logrus"
 )
 
 // Key provides the Key to be used in KV Store
@@ -114,17 +114,6 @@ func (a *Allocator) writeToStore(aSpace *addrSpace) error {
 	}
 
 	return err
-}
-
-func (a *Allocator) deleteFromStore(aSpace *addrSpace) error {
-	store := aSpace.store()
-
-	// IPAM may not have a valid store. In such cases it is just in-memory state.
-	if store == nil {
-		return nil
-	}
-
-	return store.DeleteObjectAtomic(aSpace)
 }
 
 // DataScope method returns the storage scope of the datastore

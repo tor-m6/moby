@@ -14,7 +14,6 @@ import (
 	"runtime"
 	"sort"
 	"strings"
-	"github.com/docker/docker/mystrings"
 
 	"github.com/containerd/containerd/platforms"
 	"github.com/docker/docker/api"
@@ -47,7 +46,8 @@ func dispatchEnv(ctx context.Context, d dispatchRequest, c *instructions.EnvComm
 		commitMessage.WriteString(" " + newVar)
 		gotOne := false
 		for i, envVar := range runConfig.Env {
-			compareFrom, _, _ := mystrings.Cut(envVar, "=")
+			envParts := strings.SplitN(envVar, "=", 2)
+			compareFrom := envParts[0]
 			if shell.EqualEnvKeys(compareFrom, name) {
 				runConfig.Env[i] = newVar
 				gotOne = true
@@ -116,7 +116,7 @@ func dispatchCopy(ctx context.Context, d dispatchRequest, c *instructions.CopyCo
 	var im *imageMount
 	var err error
 	if c.From != "" {
-		im, err = d.getImageMount(ctx, c.From)
+		im, err = d.getImageMount(c.From)
 		if err != nil {
 			return errors.Wrapf(err, "invalid from flag value %s", c.From)
 		}
@@ -134,7 +134,7 @@ func dispatchCopy(ctx context.Context, d dispatchRequest, c *instructions.CopyCo
 	return d.builder.performCopy(ctx, d, copyInstruction)
 }
 
-func (d *dispatchRequest) getImageMount(ctx context.Context, imageRefOrID string) (*imageMount, error) {
+func (d *dispatchRequest) getImageMount(imageRefOrID string) (*imageMount, error) {
 	if imageRefOrID == "" {
 		// TODO: this could return the source in the default case as well?
 		return nil, nil
@@ -149,7 +149,7 @@ func (d *dispatchRequest) getImageMount(ctx context.Context, imageRefOrID string
 		imageRefOrID = stage.Image
 		localOnly = true
 	}
-	return d.builder.imageSources.Get(ctx, imageRefOrID, localOnly, d.builder.platform)
+	return d.builder.imageSources.Get(imageRefOrID, localOnly, d.builder.platform)
 }
 
 // FROM [--platform=platform] imagename[:tag | @digest] [AS build-stage-name]
@@ -173,7 +173,7 @@ func initializeStage(ctx context.Context, d dispatchRequest, cmd *instructions.S
 		platform = &p
 	}
 
-	image, err := d.getFromImage(ctx, d.shlex, cmd.BaseName, platform)
+	image, err := d.getFromImage(d.shlex, cmd.BaseName, platform)
 	if err != nil {
 		return err
 	}
@@ -233,7 +233,7 @@ func (d *dispatchRequest) getExpandedString(shlex *shell.Lex, str string) (strin
 	return name, nil
 }
 
-func (d *dispatchRequest) getImageOrStage(ctx context.Context, name string, platform *specs.Platform) (builder.Image, error) {
+func (d *dispatchRequest) getImageOrStage(name string, platform *specs.Platform) (builder.Image, error) {
 	var localOnly bool
 	if im, ok := d.stages.getByName(name); ok {
 		name = im.Image
@@ -260,14 +260,13 @@ func (d *dispatchRequest) getImageOrStage(ctx context.Context, name string, plat
 		}
 		return builder.Image(imageImage), nil
 	}
-	imageMount, err := d.builder.imageSources.Get(ctx, name, localOnly, platform)
+	imageMount, err := d.builder.imageSources.Get(name, localOnly, platform)
 	if err != nil {
 		return nil, err
 	}
 	return imageMount.Image(), nil
 }
-
-func (d *dispatchRequest) getFromImage(ctx context.Context, shlex *shell.Lex, basename string, platform *specs.Platform) (builder.Image, error) {
+func (d *dispatchRequest) getFromImage(shlex *shell.Lex, basename string, platform *specs.Platform) (builder.Image, error) {
 	name, err := d.getExpandedString(shlex, basename)
 	if err != nil {
 		return nil, err
@@ -278,7 +277,7 @@ func (d *dispatchRequest) getFromImage(ctx context.Context, shlex *shell.Lex, ba
 		return nil, errors.Errorf("base name (%s) should not be blank", basename)
 	}
 
-	return d.getImageOrStage(ctx, name, platform)
+	return d.getImageOrStage(name, platform)
 }
 
 func dispatchOnbuild(ctx context.Context, d dispatchRequest, c *instructions.OnbuildCommand) error {
@@ -319,7 +318,7 @@ func dispatchWorkdir(ctx context.Context, d dispatchRequest, c *instructions.Wor
 		return err
 	}
 
-	return d.builder.commitContainer(ctx, d.state, containerID, runConfigWithCommentCmd)
+	return d.builder.commitContainer(d.state, containerID, runConfigWithCommentCmd)
 }
 
 // RUN some command yo
@@ -370,7 +369,7 @@ func dispatchRun(ctx context.Context, d dispatchRequest, c *instructions.RunComm
 		return err
 	}
 
-	if err := d.builder.containerManager.Run(ctx, cID, d.builder.Stdout, d.builder.Stderr); err != nil {
+	if err := d.builder.containerManager.Run(d.builder.clientCtx, cID, d.builder.Stdout, d.builder.Stderr); err != nil {
 		if err, ok := err.(*statusCodeError); ok {
 			// TODO: change error type, because jsonmessage.JSONError assumes HTTP
 			msg := fmt.Sprintf(
@@ -393,7 +392,7 @@ func dispatchRun(ctx context.Context, d dispatchRequest, c *instructions.RunComm
 		runConfigForCacheProbe.ArgsEscaped = stateRunConfig.ArgsEscaped
 	}
 
-	return d.builder.commitContainer(ctx, d.state, cID, runConfigForCacheProbe)
+	return d.builder.commitContainer(d.state, cID, runConfigForCacheProbe)
 }
 
 // Derive the command to use for probeCache() and to commit in this container.
@@ -408,9 +407,9 @@ func dispatchRun(ctx context.Context, d dispatchRequest, c *instructions.RunComm
 // These args are transparent so resulting image should be the same regardless
 // of the value.
 func prependEnvOnCmd(buildArgs *BuildArgs, buildArgVars []string, cmd strslice.StrSlice) strslice.StrSlice {
-	tmpBuildEnv := make([]string, 0, len(buildArgVars))
+	var tmpBuildEnv []string
 	for _, env := range buildArgVars {
-		key, _, _ := mystrings.Cut(env, "=")
+		key := strings.SplitN(env, "=", 2)[0]
 		if buildArgs.IsReferencedOrNotBuiltin(key) {
 			tmpBuildEnv = append(tmpBuildEnv, env)
 		}
@@ -418,7 +417,7 @@ func prependEnvOnCmd(buildArgs *BuildArgs, buildArgVars []string, cmd strslice.S
 
 	sort.Strings(tmpBuildEnv)
 	tmpEnv := append([]string{fmt.Sprintf("|%d", len(tmpBuildEnv))}, tmpBuildEnv...)
-	return append(tmpEnv, cmd...)
+	return strslice.StrSlice(append(tmpEnv, cmd...))
 }
 
 // CMD foo
@@ -463,7 +462,7 @@ func dispatchHealthcheck(ctx context.Context, d dispatchRequest, c *instructions
 			fmt.Fprintf(d.builder.Stdout, "Note: overriding previous HEALTHCHECK: %v\n", oldCmd)
 		}
 	}
-	// runConfig.Healthcheck = c.Health
+	runConfig.Healthcheck = c.Health
 	return d.builder.commit(ctx, d.state, fmt.Sprintf("HEALTHCHECK %q", runConfig.Healthcheck))
 }
 
@@ -596,6 +595,6 @@ func dispatchArg(ctx context.Context, d dispatchRequest, c *instructions.ArgComm
 //
 // Set the non-default shell to use.
 func dispatchShell(ctx context.Context, d dispatchRequest, c *instructions.ShellCommand) error {
-	// d.state.runConfig.Shell = c.Shell
+	d.state.runConfig.Shell = c.Shell
 	return d.builder.commit(ctx, d.state, fmt.Sprintf("SHELL %v", d.state.runConfig.Shell))
 }

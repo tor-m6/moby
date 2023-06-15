@@ -6,21 +6,18 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/Sirupsen/logrus"
-	"github.com/docker/libnetwork/bitseq"
-	"github.com/docker/libnetwork/datastore"
-	"github.com/docker/libnetwork/discoverapi"
-	"github.com/docker/libnetwork/ipamapi"
-	"github.com/docker/libnetwork/ipamutils"
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/bitseq"
+	"github.com/docker/docker/libnetwork/datastore"
+	"github.com/docker/docker/libnetwork/discoverapi"
+	"github.com/docker/docker/libnetwork/ipamapi"
+	"github.com/docker/docker/libnetwork/ipamutils"
+	"github.com/docker/docker/libnetwork/types"
+	"github.com/sirupsen/logrus"
 )
 
 const (
 	localAddressSpace  = "LocalDefault"
 	globalAddressSpace = "GlobalDefault"
-	// The biggest configurable host subnets
-	minNetSize   = 8
-	minNetSizeV6 = 64
 	// datastore keyes for ipam objects
 	dsConfigKey = "ipam/" + ipamapi.DefaultIPAM + "/config"
 	dsDataKey   = "ipam/" + ipamapi.DefaultIPAM + "/data"
@@ -45,9 +42,10 @@ func NewAllocator(lcDs, glDs datastore.DataStore) (*Allocator, error) {
 	a := &Allocator{}
 
 	// Load predefined subnet pools
+
 	a.predefined = map[string][]*net.IPNet{
-		localAddressSpace:  ipamutils.PredefinedBroadNetworks,
-		globalAddressSpace: ipamutils.PredefinedGranularNetworks,
+		localAddressSpace:  ipamutils.GetLocalScopeDefaultNetworks(),
+		globalAddressSpace: ipamutils.GetGlobalScopeDefaultNetworks(),
 	}
 
 	// Initialize asIndices map
@@ -102,11 +100,9 @@ func (a *Allocator) updateBitMasks(aSpace *addrSpace) error {
 	aSpace.Unlock()
 
 	// Add the bitmasks (data could come from datastore)
-	if inserterList != nil {
-		for _, f := range inserterList {
-			if err := f(); err != nil {
-				return err
-			}
+	for _, f := range inserterList {
+		if err := f(); err != nil {
+			return err
 		}
 	}
 
@@ -203,6 +199,10 @@ func (a *Allocator) GetDefaultAddressSpaces() (string, string, error) {
 }
 
 // RequestPool returns an address pool along with its unique id.
+// addressSpace must be a valid address space name and must not be the empty string.
+// If pool is the empty string then the default predefined pool for addressSpace will be used, otherwise pool must be a valid IP address and length in CIDR notation.
+// If subPool is not empty, it must be a valid IP address and length in CIDR notation which is a sub-range of pool.
+// subPool must be empty if pool is empty.
 func (a *Allocator) RequestPool(addressSpace, pool, subPool string, options map[string]string, v6 bool) (string, *net.IPNet, map[string]string, error) {
 	logrus.Debugf("RequestPool(%s, %s, %s, %v, %t)", addressSpace, pool, subPool, options, v6)
 
@@ -283,8 +283,8 @@ retry:
 	return remove()
 }
 
-// Given the address space, returns the local or global PoolConfig based on the
-// address space is local or global. AddressSpace locality is being registered with IPAM out of band.
+// Given the address space, returns the local or global PoolConfig based on whether the
+// address space is local or global. AddressSpace locality is registered with IPAM out of band.
 func (a *Allocator) getAddrSpace(as string) (*addrSpace, error) {
 	a.Lock()
 	defer a.Unlock()
@@ -295,6 +295,8 @@ func (a *Allocator) getAddrSpace(as string) (*addrSpace, error) {
 	return aSpace, nil
 }
 
+// parsePoolRequest parses and validates a request to create a new pool under addressSpace and returns
+// a SubnetKey, network and range describing the request.
 func (a *Allocator) parsePoolRequest(addressSpace, pool, subPool string, v6 bool) (*SubnetKey, *net.IPNet, *AddressRange, error) {
 	var (
 		nw  *net.IPNet
@@ -346,12 +348,15 @@ func (a *Allocator) insertBitMask(key SubnetKey, pool *net.IPNet) error {
 		return err
 	}
 
-	// Do not let network identifier address be reserved
-	// Do the same for IPv6 so that bridge ip starts with XXXX...::1
-	h.Set(0)
+	// Pre-reserve the network address on IPv4 networks large
+	// enough to have one (i.e., anything bigger than a /31.
+	if !(ipVer == v4 && numAddresses <= 2) {
+		h.Set(0)
+	}
 
-	// Do not let broadcast address be reserved
-	if ipVer == v4 {
+	// Pre-reserve the broadcast address on IPv4 networks large
+	// enough to have one (i.e., anything bigger than a /31).
+	if ipVer == v4 && numAddresses > 2 {
 		h.Set(numAddresses - 1)
 	}
 
@@ -408,7 +413,7 @@ func (a *Allocator) getPredefinedPool(as string, ipV6 bool) (*net.IPNet, error) 
 	}
 
 	if as != localAddressSpace && as != globalAddressSpace {
-		return nil, types.NotImplementedErrorf("no default pool availbale for non-default addresss spaces")
+		return nil, types.NotImplementedErrorf("no default pool available for non-default address spaces")
 	}
 
 	aSpace, err := a.getAddrSpace(as)
@@ -550,6 +555,7 @@ func (a *Allocator) ReleaseAddress(poolID string, address net.IP) error {
 		return types.InternalErrorf("could not find bitmask in datastore for %s on address %v release from pool %s: %v",
 			k.String(), address, poolID, err)
 	}
+	defer logrus.Debugf("Released address PoolID:%s, Address:%v Sequence:%s", poolID, address, bm.String())
 
 	return bm.Unset(ipToUint64(h))
 }
@@ -561,9 +567,10 @@ func (a *Allocator) getAddress(nw *net.IPNet, bitmask *bitseq.Handle, prefAddres
 		base    *net.IPNet
 	)
 
+	logrus.Debugf("Request address PoolID:%v %s Serial:%v PrefAddress:%v ", nw, bitmask.String(), serial, prefAddress)
 	base = types.GetIPNetCopy(nw)
 
-	if bitmask.Unselected() <= 0 {
+	if bitmask.Unselected() == 0 {
 		return nil, ipamapi.ErrNoAvailableIPs
 	}
 	if ipr == nil && prefAddress == nil {

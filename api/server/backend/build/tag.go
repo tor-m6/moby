@@ -1,7 +1,6 @@
 package build // import "github.com/docker/docker/api/server/backend/build"
 
 import (
-	"context"
 	"fmt"
 	"io"
 
@@ -11,9 +10,9 @@ import (
 )
 
 // tagImages creates image tags for the imageID.
-func tagImages(ctx context.Context, ic ImageComponent, stdout io.Writer, imageID image.ID, repoAndTags []reference.Named) error {
+func tagImages(ic ImageComponent, stdout io.Writer, imageID image.ID, repoAndTags []reference.Named) error {
 	for _, rt := range repoAndTags {
-		if err := ic.TagImage(ctx, imageID, rt); err != nil {
+		if err := ic.TagImageWithReference(imageID, rt); err != nil {
 			return err
 		}
 		_, _ = fmt.Fprintln(stdout, "Successfully tagged", reference.FamiliarString(rt))

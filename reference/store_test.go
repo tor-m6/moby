@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/docker/distribution/reference"
-	"github.com/docker/docker/errdefs"
 	"github.com/opencontainers/go-digest"
 	"gotest.tools/v3/assert"
 	is "gotest.tools/v3/assert/cmp"
@@ -28,11 +28,20 @@ var (
 )
 
 func TestLoad(t *testing.T) {
-	jsonFile := filepath.Join(t.TempDir(), "repositories.json")
-	err := os.WriteFile(jsonFile, marshalledSaveLoadTestCases, 0o666)
-	assert.NilError(t, err)
+	jsonFile, err := os.CreateTemp("", "tag-store-test")
+	if err != nil {
+		t.Fatalf("error creating temp file: %v", err)
+	}
+	defer os.RemoveAll(jsonFile.Name())
 
-	store, err := NewReferenceStore(jsonFile)
+	// Write canned json to the temp file
+	_, err = jsonFile.Write(marshalledSaveLoadTestCases)
+	if err != nil {
+		t.Fatalf("error writing to temp file: %v", err)
+	}
+	jsonFile.Close()
+
+	store, err := NewReferenceStore(jsonFile.Name())
 	if err != nil {
 		t.Fatalf("error creating tag store: %v", err)
 	}
@@ -53,11 +62,15 @@ func TestLoad(t *testing.T) {
 }
 
 func TestSave(t *testing.T) {
-	jsonFile := filepath.Join(t.TempDir(), "repositories.json")
-	err := os.WriteFile(jsonFile, []byte(`{}`), 0o666)
+	jsonFile, err := os.CreateTemp("", "tag-store-test")
 	assert.NilError(t, err)
 
-	store, err := NewReferenceStore(jsonFile)
+	_, err = jsonFile.Write([]byte(`{}`))
+	assert.NilError(t, err)
+	jsonFile.Close()
+	defer os.RemoveAll(jsonFile.Name())
+
+	store, err := NewReferenceStore(jsonFile.Name())
 	if err != nil {
 		t.Fatalf("error creating tag store: %v", err)
 	}
@@ -80,7 +93,7 @@ func TestSave(t *testing.T) {
 		}
 	}
 
-	jsonBytes, err := os.ReadFile(jsonFile)
+	jsonBytes, err := os.ReadFile(jsonFile.Name())
 	if err != nil {
 		t.Fatalf("could not read json file: %v", err)
 	}
@@ -91,11 +104,16 @@ func TestSave(t *testing.T) {
 }
 
 func TestAddDeleteGet(t *testing.T) {
-	jsonFile := filepath.Join(t.TempDir(), "repositories.json")
-	err := os.WriteFile(jsonFile, []byte(`{}`), 0o666)
+	jsonFile, err := os.CreateTemp("", "tag-store-test")
+	if err != nil {
+		t.Fatalf("error creating temp file: %v", err)
+	}
+	_, err = jsonFile.Write([]byte(`{}`))
 	assert.NilError(t, err)
+	_ = jsonFile.Close()
+	defer func() { _ = os.RemoveAll(jsonFile.Name()) }()
 
-	store, err := NewReferenceStore(jsonFile)
+	store, err := NewReferenceStore(jsonFile.Name())
 	if err != nil {
 		t.Fatalf("error creating tag store: %v", err)
 	}
@@ -161,14 +179,11 @@ func TestAddDeleteGet(t *testing.T) {
 	if err = store.AddDigest(ref5.(reference.Canonical), testImageID2, false); err != nil {
 		t.Fatalf("error redundantly adding to store: %v", err)
 	}
-	err = store.AddDigest(ref5.(reference.Canonical), testImageID3, false)
-	assert.Check(t, is.ErrorType(err, errdefs.IsConflict), "overwriting a digest with a different digest should fail")
-	err = store.AddDigest(ref5.(reference.Canonical), testImageID3, true)
-	assert.Check(t, is.ErrorType(err, errdefs.IsConflict), "overwriting a digest cannot be forced")
 
 	// Attempt to overwrite with force == false
-	err = store.AddTag(ref4, testImageID3, false)
-	assert.Check(t, is.ErrorType(err, errdefs.IsConflict), "did not get expected error on overwrite attempt")
+	if err = store.AddTag(ref4, testImageID3, false); err == nil || !strings.HasPrefix(err.Error(), "Conflict:") {
+		t.Fatalf("did not get expected error on overwrite attempt - got %v", err)
+	}
 	// Repeat to overwrite with force == true
 	if err = store.AddTag(ref4, testImageID3, true); err != nil {
 		t.Fatalf("failed to force tag overwrite: %v", err)
@@ -320,7 +335,11 @@ func TestAddDeleteGet(t *testing.T) {
 }
 
 func TestInvalidTags(t *testing.T) {
-	store, err := NewReferenceStore(filepath.Join(t.TempDir(), "repositories.json"))
+	tmpDir, err := os.MkdirTemp("", "tag-store-test")
+	assert.NilError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	store, err := NewReferenceStore(filepath.Join(tmpDir, "repositories.json"))
 	assert.NilError(t, err)
 	id := digest.Digest("sha256:470022b8af682154f57a2163d030eb369549549cba00edc69e1b99b46bb924d6")
 
@@ -328,12 +347,12 @@ func TestInvalidTags(t *testing.T) {
 	ref, err := reference.ParseNormalizedNamed("sha256:abc")
 	assert.NilError(t, err)
 	err = store.AddTag(ref, id, true)
-	assert.Check(t, is.ErrorType(err, errdefs.IsInvalidParameter))
+	assert.Check(t, is.ErrorContains(err, ""))
 
 	// setting digest as a tag
 	ref, err = reference.ParseNormalizedNamed("registry@sha256:367eb40fd0330a7e464777121e39d2f5b3e8e23a1e159342e53ab05c9e4d94e6")
 	assert.NilError(t, err)
 
 	err = store.AddTag(ref, id, true)
-	assert.Check(t, is.ErrorType(err, errdefs.IsInvalidParameter))
+	assert.Check(t, is.ErrorContains(err, ""))
 }

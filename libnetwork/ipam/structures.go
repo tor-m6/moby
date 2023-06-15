@@ -7,9 +7,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/docker/libnetwork/datastore"
-	"github.com/docker/libnetwork/ipamapi"
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/datastore"
+	"github.com/docker/docker/libnetwork/ipamapi"
+	"github.com/docker/docker/libnetwork/types"
 )
 
 // SubnetKey is the pointer to the configured pools in each address space
@@ -159,7 +159,7 @@ func (aSpace *addrSpace) MarshalJSON() ([]byte, error) {
 	defer aSpace.Unlock()
 
 	m := map[string]interface{}{
-		"Scope": string(aSpace.scope),
+		"Scope": aSpace.scope,
 	}
 
 	if aSpace.subnets != nil {
@@ -186,7 +186,7 @@ func (aSpace *addrSpace) UnmarshalJSON(data []byte) error {
 
 	aSpace.scope = datastore.LocalScope
 	s := m["Scope"].(string)
-	if s == string(datastore.GlobalScope) {
+	if s == datastore.GlobalScope {
 		aSpace.scope = datastore.GlobalScope
 	}
 
@@ -257,17 +257,19 @@ func (aSpace *addrSpace) New() datastore.KVObject {
 	}
 }
 
+// updatePoolDBOnAdd returns a closure which will add the subnet k to the address space when executed.
 func (aSpace *addrSpace) updatePoolDBOnAdd(k SubnetKey, nw *net.IPNet, ipr *AddressRange, pdf bool) (func() error, error) {
 	aSpace.Lock()
 	defer aSpace.Unlock()
 
 	// Check if already allocated
-	if p, ok := aSpace.subnets[k]; ok {
+	if _, ok := aSpace.subnets[k]; ok {
 		if pdf {
 			return nil, types.InternalMaskableErrorf("predefined pool %s is already reserved", nw)
 		}
-		aSpace.incRefCount(p, 1)
-		return func() error { return nil }, nil
+		// This means the same pool is already allocated. updatePoolDBOnAdd is called when there
+		// is request for a pool/subpool. It should ensure there is no overlap with existing pools
+		return nil, ipamapi.ErrPoolOverlap
 	}
 
 	// If master pool, check for overlap
@@ -280,7 +282,7 @@ func (aSpace *addrSpace) updatePoolDBOnAdd(k SubnetKey, nw *net.IPNet, ipr *Addr
 		return func() error { return aSpace.alloc.insertBitMask(k, nw) }, nil
 	}
 
-	// This is a new non-master pool
+	// This is a new non-master pool (subPool)
 	p := &PoolData{
 		ParentKey: SubnetKey{AddressSpace: k.AddressSpace, Subnet: k.Subnet},
 		Pool:      nw,

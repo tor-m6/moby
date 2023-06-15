@@ -1,5 +1,5 @@
-//go:build linux || freebsd || darwin || windows
-// +build linux freebsd darwin windows
+//go:build linux || freebsd || darwin || windows || inno
+// +build linux freebsd darwin windows inno
 
 package system
 

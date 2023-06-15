@@ -37,7 +37,7 @@ func setupContainerWithName(t *testing.T, name string, daemon *Daemon) *containe
 	t.Helper()
 	var (
 		id              = uuid.New().String()
-		computedImageID = image.ID(digest.FromString(id))
+		computedImageID = digest.FromString(id)
 		cRoot           = filepath.Join(root, id)
 	)
 	if err := os.MkdirAll(cRoot, 0755); err != nil {
@@ -54,7 +54,7 @@ func setupContainerWithName(t *testing.T, name string, daemon *Daemon) *containe
 	c.HostConfig = &containertypes.HostConfig{}
 
 	// these are for passing the refreshImage reducer
-	c.ImageID = computedImageID
+	c.ImageID = image.IDFromDigest(computedImageID)
 	c.Config = &containertypes.Config{
 		Image: computedImageID.String(),
 	}

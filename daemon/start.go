@@ -5,7 +5,6 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/containerd/containerd"
 	"github.com/docker/docker/api/types"
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/container"
@@ -69,9 +68,9 @@ func (daemon *Daemon) ContainerStart(ctx context.Context, name string, hostConfi
 				// if user has change the network mode on starting, clean up the
 				// old networks. It is a deprecated feature and has been removed in Docker 1.12
 				ctr.NetworkSettings.Networks = nil
-			}
-			if err := ctr.CheckpointTo(daemon.containersReplica); err != nil {
-				return errdefs.System(err)
+				if err := ctr.CheckpointTo(daemon.containersReplica); err != nil {
+					return errdefs.System(err)
+				}
 			}
 			ctr.InitDNSHostConfig()
 		}
@@ -100,7 +99,7 @@ func (daemon *Daemon) ContainerStart(ctx context.Context, name string, hostConfi
 // container needs, such as storage and networking, as well as links
 // between containers. The container is left waiting for a signal to
 // begin running.
-func (daemon *Daemon) containerStart(ctx context.Context, container *container.Container, checkpoint string, checkpointDir string, resetRestartManager bool) (retErr error) {
+func (daemon *Daemon) containerStart(ctx context.Context, container *container.Container, checkpoint string, checkpointDir string, resetRestartManager bool) (err error) {
 	start := time.Now()
 	container.Lock()
 	defer container.Unlock()
@@ -121,11 +120,11 @@ func (daemon *Daemon) containerStart(ctx context.Context, container *container.C
 	// if we encounter an error during start we need to ensure that any other
 	// setup has been cleaned up properly
 	defer func() {
-		if retErr != nil {
-			container.SetError(retErr)
+		if err != nil {
+			container.SetError(err)
 			// if no one else has set it, make sure we don't leave it at zero
 			if container.ExitCode() == 0 {
-				container.SetExitCode(exitUnknown)
+				container.SetExitCode(128)
 			}
 			if err := container.CheckpointTo(daemon.containersReplica); err != nil {
 				logrus.Errorf("%s: failed saving state on start failure: %v", container.ID, err)
@@ -162,9 +161,9 @@ func (daemon *Daemon) containerStart(ctx context.Context, container *container.C
 		container.HasBeenManuallyStopped = false
 	}
 
-	if err := daemon.saveAppArmorConfig(container); err != nil {
-		return err
-	}
+	// if err := daemon.saveAppArmorConfig(container); err != nil {
+	// 	return err
+	// }
 
 	if checkpoint != "" {
 		checkpointDir, err = getCheckpointDir(checkpointDir, checkpoint, container.Name, container.ID, container.CheckpointDir(), false)
@@ -178,27 +177,21 @@ func (daemon *Daemon) containerStart(ctx context.Context, container *container.C
 		return err
 	}
 
-	newContainerOpts := []containerd.NewContainerOpts{}
-	if daemon.UsesSnapshotter() {
-		newContainerOpts = append(newContainerOpts, containerd.WithSnapshotter(container.Driver))
-		newContainerOpts = append(newContainerOpts, containerd.WithSnapshot(container.ID))
-	}
-
-	ctr, err := libcontainerd.ReplaceContainer(ctx, daemon.containerd, container.ID, spec, shim, createOptions, newContainerOpts...)
+	ctr, err := libcontainerd.ReplaceContainer(ctx, daemon.containerd, container.ID, spec, shim, createOptions)
 	if err != nil {
-		return setExitCodeFromError(container.SetExitCode, err)
+		return translateContainerdStartErr(container.Path, container.SetExitCode, err)
 	}
 
 	// TODO(mlaventure): we need to specify checkpoint options here
-	tsk, err := ctr.Start(context.TODO(), // Passing ctx to ctr.Start caused integration tests to be stuck in the cleanup phase
-		checkpointDir, container.StreamConfig.Stdin() != nil || container.Config.Tty,
+	tsk, err := ctr.Start(ctx, checkpointDir,
+		container.StreamConfig.Stdin() != nil || container.Config.Tty,
 		container.InitializeStdio)
 	if err != nil {
 		if err := ctr.Delete(context.Background()); err != nil {
 			logrus.WithError(err).WithField("container", container.ID).
 				Error("failed to delete failed start container")
 		}
-		return setExitCodeFromError(container.SetExitCode, err)
+		return translateContainerdStartErr(container.Path, container.SetExitCode, err)
 	}
 
 	container.HasBeenManuallyRestarted = false

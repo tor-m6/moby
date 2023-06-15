@@ -13,7 +13,12 @@ import (
 )
 
 func TestMiddlewares(t *testing.T) {
-	srv := &Server{}
+	cfg := &Config{
+		Version: "0.1omega2",
+	}
+	srv := &Server{
+		cfg: cfg,
+	}
 
 	srv.UseMiddleware(middleware.NewVersionMiddleware("0.1omega2", api.DefaultVersion, api.MinVersion))
 

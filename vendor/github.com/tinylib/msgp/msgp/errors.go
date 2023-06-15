@@ -123,9 +123,6 @@ func (e errWrapped) Resumable() bool {
 	return resumableDefault
 }
 
-// Unwrap returns the cause.
-func (e errWrapped) Unwrap() error { return e.cause }
-
 type errShort struct{}
 
 func (e errShort) Error() string   { return "msgp: too few bytes left to read object" }

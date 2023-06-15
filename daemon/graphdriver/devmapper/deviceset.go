@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/daemon/graphdriver"
+	"github.com/docker/docker/dockerversion"
 	"github.com/docker/docker/pkg/devicemapper"
 	"github.com/docker/docker/pkg/dmesg"
 	"github.com/docker/docker/pkg/idtools"
@@ -1671,7 +1672,12 @@ func (devices *DeviceSet) initDevmapper(doInit bool) (retErr error) {
 
 	// https://github.com/docker/docker/issues/4036
 	if supported := devicemapper.UdevSetSyncSupport(true); !supported {
-		logger.Error("Udev sync is not supported, which will lead to data loss and unexpected behavior. Make sure you have a recent version of libdevmapper installed and are running a dynamic binary, or select a different storage driver. For more information, see https://docs.docker.com/go/storage-driver/")
+		if dockerversion.IAmStatic == "true" {
+			logger.Error("Udev sync is not supported. This will lead to data loss and unexpected behavior. Install a dynamic binary to use devicemapper or select a different storage driver. For more information, see https://docs.docker.com/engine/reference/commandline/dockerd/#storage-driver-options")
+		} else {
+			logger.Error("Udev sync is not supported. This will lead to data loss and unexpected behavior. Install a more recent version of libdevmapper or select a different storage driver. For more information, see https://docs.docker.com/engine/reference/commandline/dockerd/#storage-driver-options")
+		}
+
 		if !devices.overrideUdevSyncCheck {
 			return graphdriver.ErrNotSupported
 		}

@@ -261,10 +261,6 @@ get_target_arch() {
 	echo amd64
 }
 
-get_target_variant() {
-	echo "${TARGETVARIANT:-}"
-}
-
 while [ $# -gt 0 ]; do
 	imageTag="$1"
 	shift
@@ -315,13 +311,11 @@ while [ $# -gt 0 ]; do
 
 					found=""
 					targetArch="$(get_target_arch)"
-					targetVariant="$(get_target_variant)"
 					# parse first level multi-arch manifest
 					for i in "${!layers[@]}"; do
 						layerMeta="${layers[$i]}"
 						maniArch="$(echo "$layerMeta" | jq --raw-output '.platform.architecture')"
-						maniVariant="$(echo "$layerMeta" | jq --raw-output '.platform.variant')"
-						if [[ "$maniArch" = "${targetArch}" ]] && [[ -z "${targetVariant}" || "$maniVariant" = "${targetVariant}" ]]; then
+						if [ "$maniArch" = "${targetArch}" ]; then
 							digest="$(echo "$layerMeta" | jq --raw-output '.digest')"
 							# get second level single manifest
 							submanifestJson="$(
@@ -338,7 +332,7 @@ while [ $# -gt 0 ]; do
 						fi
 					done
 					if [ -z "$found" ]; then
-						echo >&2 "error: manifest for ${targetArch}${targetVariant:+/${targetVariant}} is not found"
+						echo >&2 "error: manifest for $maniArch is not found"
 						exit 1
 					fi
 					;;

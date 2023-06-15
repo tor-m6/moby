@@ -9,8 +9,6 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/docker/docker/myfilepath"
-	"github.com/docker/docker/myos"
 	"github.com/docker/docker/pkg/pools"
 	"github.com/docker/docker/pkg/system"
 	"github.com/sirupsen/logrus"
@@ -89,7 +87,7 @@ func UnpackLayer(dest string, layer io.Reader, options *TarOptions) (size int64,
 				basename := filepath.Base(hdr.Name)
 				aufsHardlinks[basename] = hdr
 				if aufsTempdir == "" {
-					if aufsTempdir, err = myos.MkdirTemp(dest, "dockerplnk"); err != nil {
+					if aufsTempdir, err = os.MkdirTemp("", "dockerplnk"); err != nil {
 						return 0, err
 					}
 					defer os.RemoveAll(aufsTempdir)
@@ -123,7 +121,7 @@ func UnpackLayer(dest string, layer io.Reader, options *TarOptions) (size int64,
 				if err != nil {
 					return 0, err
 				}
-				err = myfilepath.WalkDir(dir, func(path string, info os.FileInfo, err error) error {
+				err = filepath.WalkDir(dir, func(path string, info os.DirEntry, err error) error {
 					if err != nil {
 						if os.IsNotExist(err) {
 							err = nil // parent was deleted

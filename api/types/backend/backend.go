@@ -5,7 +5,6 @@ import (
 	"io"
 	"time"
 
-	"github.com/docker/distribution/reference"
 	"github.com/docker/docker/api/types/container"
 )
 
@@ -103,7 +102,8 @@ type ExecProcessConfig struct {
 // CreateImageConfig is the configuration for creating an image from a
 // container.
 type CreateImageConfig struct {
-	Tag     reference.NamedTagged
+	Repo    string
+	Tag     string
 	Pause   bool
 	Author  string
 	Comment string

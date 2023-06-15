@@ -1,8 +1,6 @@
 package images
 
 import (
-	"context"
-
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/layer"
 	"github.com/docker/docker/pkg/system"
@@ -10,9 +8,9 @@ import (
 )
 
 // GetContainerLayerSize returns real size & virtual size
-func (i *ImageService) GetContainerLayerSize(ctx context.Context, containerID string) (int64, int64, error) {
+func (i *ImageService) GetContainerLayerSize(containerID string) (int64, int64) {
 	// TODO Windows
-	return 0, 0, nil
+	return 0, 0
 }
 
 // GetLayerFolders returns the layer folders from an image RootFS

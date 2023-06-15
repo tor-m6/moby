@@ -5,29 +5,95 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"os"
 	"os/exec"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
-	"github.com/Sirupsen/logrus"
+	"github.com/docker/docker/libnetwork"
+	"github.com/docker/docker/libnetwork/ipamapi"
+	"github.com/docker/docker/libnetwork/netlabel"
+	"github.com/docker/docker/libnetwork/options"
+	"github.com/docker/docker/libnetwork/osl"
+	"github.com/docker/docker/libnetwork/testutils"
+	"github.com/docker/docker/libnetwork/types"
 	"github.com/docker/docker/pkg/reexec"
-	"github.com/docker/libnetwork"
-	"github.com/docker/libnetwork/ipamapi"
-	"github.com/docker/libnetwork/netlabel"
-	"github.com/docker/libnetwork/options"
-	"github.com/docker/libnetwork/osl"
-	"github.com/docker/libnetwork/testutils"
-	"github.com/docker/libnetwork/types"
-	"github.com/opencontainers/runc/libcontainer"
-	"github.com/opencontainers/runc/libcontainer/configs"
+	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
 )
+
+const (
+	bridgeNetType = "bridge"
+)
+
+var (
+	origins = netns.None()
+	testns  = netns.None()
+)
+
+func createGlobalInstance(t *testing.T) {
+	var err error
+	defer close(start)
+
+	origins, err = netns.Get()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if testutils.IsRunningInContainer() {
+		testns = origins
+	} else {
+		testns, err = netns.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	netOption := options.Generic{
+		netlabel.GenericData: options.Generic{
+			"BridgeName": "network",
+		},
+	}
+
+	net1, err := controller.NetworkByName("testhost")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	net2, err := createTestNetwork("bridge", "network2", netOption, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = net1.CreateEndpoint("pep1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = net2.CreateEndpoint("pep2")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = net2.CreateEndpoint("pep3")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if sboxes[first-1], err = controller.NewSandbox(fmt.Sprintf("%drace", first), libnetwork.OptionUseDefaultSandbox()); err != nil {
+		t.Fatal(err)
+	}
+	for thd := first + 1; thd <= last; thd++ {
+		if sboxes[thd-1], err = controller.NewSandbox(fmt.Sprintf("%drace", thd)); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
 
 func TestHost(t *testing.T) {
 	sbx1, err := controller.NewSandbox("host_c1",
@@ -521,14 +587,17 @@ func externalKeyTest(t *testing.T, reexec bool) {
 }
 
 func reexecSetKey(key string, containerID string, controllerID string) error {
+	type libcontainerState struct {
+		NamespacePaths map[string]string
+	}
 	var (
-		state libcontainer.State
+		state libcontainerState
 		b     []byte
 		err   error
 	)
 
-	state.NamespacePaths = make(map[configs.NamespaceType]string)
-	state.NamespacePaths[configs.NamespaceType("NEWNET")] = key
+	state.NamespacePaths = make(map[string]string)
+	state.NamespacePaths["NEWNET"] = key
 	if b, err = json.Marshal(state); err != nil {
 		return err
 	}
@@ -549,14 +618,14 @@ func TestEnableIPv6(t *testing.T) {
 
 	tmpResolvConf := []byte("search pommesfrites.fr\nnameserver 12.34.56.78\nnameserver 2001:4860:4860::8888\n")
 	expectedResolvConf := []byte("search pommesfrites.fr\nnameserver 127.0.0.11\nnameserver 2001:4860:4860::8888\noptions ndots:0\n")
-	//take a copy of resolv.conf for restoring after test completes
-	resolvConfSystem, err := ioutil.ReadFile("/etc/resolv.conf")
+	// take a copy of resolv.conf for restoring after test completes
+	resolvConfSystem, err := os.ReadFile("/etc/resolv.conf")
 	if err != nil {
 		t.Fatal(err)
 	}
-	//cleanup
+	// cleanup
 	defer func() {
-		if err := ioutil.WriteFile("/etc/resolv.conf", resolvConfSystem, 0644); err != nil {
+		if err := os.WriteFile("/etc/resolv.conf", resolvConfSystem, 0644); err != nil {
 			t.Fatal(err)
 		}
 	}()
@@ -584,7 +653,7 @@ func TestEnableIPv6(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := ioutil.WriteFile("/etc/resolv.conf", tmpResolvConf, 0644); err != nil {
+	if err := os.WriteFile("/etc/resolv.conf", tmpResolvConf, 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -606,7 +675,7 @@ func TestEnableIPv6(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	content, err := ioutil.ReadFile(resolvConfPath)
+	content, err := os.ReadFile(resolvConfPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -627,14 +696,14 @@ func TestResolvConfHost(t *testing.T) {
 
 	tmpResolvConf := []byte("search localhost.net\nnameserver 127.0.0.1\nnameserver 2001:4860:4860::8888\n")
 
-	//take a copy of resolv.conf for restoring after test completes
-	resolvConfSystem, err := ioutil.ReadFile("/etc/resolv.conf")
+	// take a copy of resolv.conf for restoring after test completes
+	resolvConfSystem, err := os.ReadFile("/etc/resolv.conf")
 	if err != nil {
 		t.Fatal(err)
 	}
-	//cleanup
+	// cleanup
 	defer func() {
-		if err := ioutil.WriteFile("/etc/resolv.conf", resolvConfSystem, 0644); err != nil {
+		if err := os.WriteFile("/etc/resolv.conf", resolvConfSystem, 0644); err != nil {
 			t.Fatal(err)
 		}
 	}()
@@ -649,7 +718,7 @@ func TestResolvConfHost(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := ioutil.WriteFile("/etc/resolv.conf", tmpResolvConf, 0644); err != nil {
+	if err := os.WriteFile("/etc/resolv.conf", tmpResolvConf, 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -657,6 +726,7 @@ func TestResolvConfHost(t *testing.T) {
 	defer os.Remove(resolvConfPath)
 
 	sb, err := controller.NewSandbox(containerID,
+		libnetwork.OptionUseDefaultSandbox(),
 		libnetwork.OptionResolvConfPath(resolvConfPath),
 		libnetwork.OptionOriginResolvConfPath("/etc/resolv.conf"))
 	if err != nil {
@@ -689,7 +759,7 @@ func TestResolvConfHost(t *testing.T) {
 		t.Fatalf("Expected file mode %s, got %s", fmode.String(), finfo.Mode().String())
 	}
 
-	content, err := ioutil.ReadFile(resolvConfPath)
+	content, err := os.ReadFile(resolvConfPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -709,14 +779,14 @@ func TestResolvConf(t *testing.T) {
 	expectedResolvConf1 := []byte("search pommesfrites.fr\nnameserver 127.0.0.11\noptions ndots:0\n")
 	tmpResolvConf3 := []byte("search pommesfrites.fr\nnameserver 113.34.56.78\n")
 
-	//take a copy of resolv.conf for restoring after test completes
-	resolvConfSystem, err := ioutil.ReadFile("/etc/resolv.conf")
+	// take a copy of resolv.conf for restoring after test completes
+	resolvConfSystem, err := os.ReadFile("/etc/resolv.conf")
 	if err != nil {
 		t.Fatal(err)
 	}
-	//cleanup
+	// cleanup
 	defer func() {
-		if err := ioutil.WriteFile("/etc/resolv.conf", resolvConfSystem, 0644); err != nil {
+		if err := os.WriteFile("/etc/resolv.conf", resolvConfSystem, 0644); err != nil {
 			t.Fatal(err)
 		}
 	}()
@@ -741,7 +811,7 @@ func TestResolvConf(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := ioutil.WriteFile("/etc/resolv.conf", tmpResolvConf1, 0644); err != nil {
+	if err := os.WriteFile("/etc/resolv.conf", tmpResolvConf1, 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -773,7 +843,7 @@ func TestResolvConf(t *testing.T) {
 		t.Fatalf("Expected file mode %s, got %s", fmode.String(), finfo.Mode().String())
 	}
 
-	content, err := ioutil.ReadFile(resolvConfPath)
+	content, err := os.ReadFile(resolvConfPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -788,7 +858,7 @@ func TestResolvConf(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := ioutil.WriteFile("/etc/resolv.conf", tmpResolvConf2, 0644); err != nil {
+	if err := os.WriteFile("/etc/resolv.conf", tmpResolvConf2, 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -807,7 +877,7 @@ func TestResolvConf(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	content, err = ioutil.ReadFile(resolvConfPath)
+	content, err = os.ReadFile(resolvConfPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -816,7 +886,7 @@ func TestResolvConf(t *testing.T) {
 		t.Fatalf("Expected:\n%s\nGot:\n%s", string(expectedResolvConf1), string(content))
 	}
 
-	if err := ioutil.WriteFile(resolvConfPath, tmpResolvConf3, 0644); err != nil {
+	if err := os.WriteFile(resolvConfPath, tmpResolvConf3, 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -830,7 +900,7 @@ func TestResolvConf(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	content, err = ioutil.ReadFile(resolvConfPath)
+	content, err = os.ReadFile(resolvConfPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -918,7 +988,17 @@ func runParallelTests(t *testing.T, thrNumber int) {
 			t.Fatal(err)
 		}
 	}
-	defer netns.Set(origns)
+	defer func() {
+		if err := netns.Set(origins); err != nil {
+			// NOTE(@cpuguy83): This...
+			// I touched this code because the linter found that we weren't checking the error...
+			// It returns an error because "origins" is a closed file handle *unless* createGlobalInstance is called.
+			// Which... this test is run in parallel and `createGlobalInstance` modifies `origins` without synchronization.
+			// I'm not sure what exactly the *intent* of this code was, but it looks very broken.
+			// Anyway that's why I'm only logging the error and not failing the test.
+			t.Log(err)
+		}
+	}()
 
 	net1, err := controller.NetworkByName("testhost")
 	if err != nil {
@@ -991,6 +1071,95 @@ func TestParallel1(t *testing.T) {
 
 func TestParallel2(t *testing.T) {
 	runParallelTests(t, 2)
+}
+
+func TestBridge(t *testing.T) {
+	if !testutils.IsRunningInContainer() {
+		defer testutils.SetupTestOSContext(t)()
+	}
+
+	netOption := options.Generic{
+		netlabel.EnableIPv6: true,
+		netlabel.GenericData: options.Generic{
+			"BridgeName":         "testnetwork",
+			"EnableICC":          true,
+			"EnableIPMasquerade": true,
+		},
+	}
+	ipamV4ConfList := []*libnetwork.IpamConf{{PreferredPool: "192.168.100.0/24", Gateway: "192.168.100.1"}}
+	ipamV6ConfList := []*libnetwork.IpamConf{{PreferredPool: "fe90::/64", Gateway: "fe90::22"}}
+
+	network, err := createTestNetwork(bridgeNetType, "testnetwork", netOption, ipamV4ConfList, ipamV6ConfList)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := network.Delete(); err != nil {
+			t.Fatal(err)
+		}
+	}()
+
+	ep, err := network.CreateEndpoint("testep")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sb, err := controller.NewSandbox(containerID, libnetwork.OptionPortMapping(getPortMapping()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := sb.Delete(); err != nil {
+			t.Fatal(err)
+		}
+	}()
+
+	err = ep.Join(sb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	epInfo, err := ep.DriverInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pmd, ok := epInfo[netlabel.PortMap]
+	if !ok {
+		t.Fatalf("Could not find expected info in endpoint data")
+	}
+	pm, ok := pmd.([]types.PortBinding)
+	if !ok {
+		t.Fatalf("Unexpected format for port mapping in endpoint operational data")
+	}
+	expectedLen := 10
+	if !isV6Listenable() {
+		expectedLen = 5
+	}
+	if len(pm) != expectedLen {
+		t.Fatalf("Incomplete data for port mapping in endpoint operational data: %d", len(pm))
+	}
+}
+
+var (
+	v6ListenableCached bool
+	v6ListenableOnce   sync.Once
+)
+
+// This is copied from the bridge driver package b/c the bridge driver is not platform agnostic.
+func isV6Listenable() bool {
+	v6ListenableOnce.Do(func() {
+		ln, err := net.Listen("tcp6", "[::1]:0")
+		if err != nil {
+			// When the kernel was booted with `ipv6.disable=1`,
+			// we get err "listen tcp6 [::1]:0: socket: address family not supported by protocol"
+			// https://github.com/moby/moby/issues/42288
+			logrus.Debugf("port_mapping: v6Listenable=false (%v)", err)
+		} else {
+			v6ListenableCached = true
+			ln.Close()
+		}
+	})
+	return v6ListenableCached
 }
 
 func TestParallel3(t *testing.T) {

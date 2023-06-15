@@ -33,6 +33,7 @@ func TestTrap(t *testing.T) {
 		multiple bool
 	}{
 		{"TERM", syscall.SIGTERM, false},
+		{"QUIT", syscall.SIGQUIT, true},
 		{"INT", os.Interrupt, false},
 		{"TERM", syscall.SIGTERM, true},
 		{"INT", os.Interrupt, true},

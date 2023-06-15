@@ -1,19 +1,19 @@
 package libnetwork
 
 import (
-	"container/heap"
 	"encoding/json"
 	"fmt"
 	"net"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/Sirupsen/logrus"
-	"github.com/docker/libnetwork/etchosts"
-	"github.com/docker/libnetwork/netlabel"
-	"github.com/docker/libnetwork/osl"
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/etchosts"
+	"github.com/docker/docker/libnetwork/netlabel"
+	"github.com/docker/docker/libnetwork/osl"
+	"github.com/docker/docker/libnetwork/types"
+	"github.com/sirupsen/logrus"
 )
 
 // Sandbox provides the control over the network container entity. It is a one to one mapping with the container.
@@ -63,8 +63,6 @@ func (sb *sandbox) processOptions(options ...SandboxOption) {
 	}
 }
 
-type epHeap []*endpoint
-
 type sandbox struct {
 	id                 string
 	containerID        string
@@ -74,8 +72,7 @@ type sandbox struct {
 	controller         *controller
 	resolver           Resolver
 	resolverOnce       sync.Once
-	refCnt             int
-	endpoints          epHeap
+	endpoints          []*endpoint
 	epPriority         map[string]int
 	populatedEndpoints map[string]struct{}
 	joinLeaveDone      chan struct{}
@@ -85,6 +82,8 @@ type sandbox struct {
 	inDelete           bool
 	ingress            bool
 	ndotsSet           bool
+	oslTypes           []osl.SandboxType // slice of properties of this sandbox
+	loadBalancerNID    string            // NID that this SB is a load balancer for
 	sync.Mutex
 	// This mutex is used to serialize service related operation for an endpoint
 	// The lock is here because the endpoint is saved into the store so is not unique
@@ -128,7 +127,6 @@ type containerConfig struct {
 	generic           map[string]interface{}
 	useDefaultSandBox bool
 	useExternalKey    bool
-	prio              int // higher the value, more the priority
 	exposedPorts      []types.TransportPort
 }
 
@@ -246,7 +244,9 @@ func (sb *sandbox) delete(force bool) error {
 	}
 
 	if sb.osSbox != nil && !sb.config.useDefaultSandBox {
-		sb.osSbox.Destroy()
+		if err := sb.osSbox.Destroy(); err != nil {
+			logrus.WithError(err).Warn("error destroying network sandbox")
+		}
 	}
 
 	if err := sb.storeDelete(); err != nil {
@@ -279,7 +279,9 @@ func (sb *sandbox) Rename(name string) error {
 
 		defer func() {
 			if err != nil {
-				lEp.rename(oldName)
+				if err2 := lEp.rename(oldName); err2 != nil {
+					logrus.WithField("old", oldName).WithField("origError", err).WithError(err2).Error("error renaming sandbox")
+				}
 			}
 		}()
 	}
@@ -353,20 +355,36 @@ func (sb *sandbox) getConnectedEndpoints() []*endpoint {
 	defer sb.Unlock()
 
 	eps := make([]*endpoint, len(sb.endpoints))
-	for i, ep := range sb.endpoints {
-		eps[i] = ep
-	}
+	copy(eps, sb.endpoints)
 
 	return eps
+}
+
+func (sb *sandbox) addEndpoint(ep *endpoint) {
+	sb.Lock()
+	defer sb.Unlock()
+
+	l := len(sb.endpoints)
+	i := sort.Search(l, func(j int) bool {
+		return ep.Less(sb.endpoints[j])
+	})
+
+	sb.endpoints = append(sb.endpoints, nil)
+	copy(sb.endpoints[i+1:], sb.endpoints[i:])
+	sb.endpoints[i] = ep
 }
 
 func (sb *sandbox) removeEndpoint(ep *endpoint) {
 	sb.Lock()
 	defer sb.Unlock()
 
+	sb.removeEndpointRaw(ep)
+}
+
+func (sb *sandbox) removeEndpointRaw(ep *endpoint) {
 	for i, e := range sb.endpoints {
 		if e == ep {
-			heap.Remove(&sb.endpoints, i)
+			sb.endpoints = append(sb.endpoints[:i], sb.endpoints[i+1:]...)
 			return
 		}
 	}
@@ -392,8 +410,8 @@ func (sb *sandbox) updateGateway(ep *endpoint) error {
 	if osSbox == nil {
 		return nil
 	}
-	osSbox.UnsetGateway()
-	osSbox.UnsetGatewayIPv6()
+	osSbox.UnsetGateway()     //nolint:errcheck
+	osSbox.UnsetGatewayIPv6() //nolint:errcheck
 
 	if ep == nil {
 		return nil
@@ -452,7 +470,7 @@ func (sb *sandbox) ResolveService(name string) ([]*net.SRV, []net.IP) {
 
 	logrus.Debugf("Service name To resolve: %v", name)
 
-	// There are DNS implementaions that allow SRV queries for names not in
+	// There are DNS implementations that allow SRV queries for names not in
 	// the format defined by RFC 2782. Hence specific validations checks are
 	// not done
 	parts := strings.Split(name, ".")
@@ -549,7 +567,6 @@ func (sb *sandbox) ResolveName(name string, ipType int) ([]net.IP, bool) {
 	}
 
 	for i := 0; i < len(reqName); i++ {
-
 		// First check for local container alias
 		ip, ipv6Miss := sb.resolveName(reqName[i], networkName[i], epList, true, ipType)
 		if ip != nil {
@@ -629,6 +646,10 @@ func (sb *sandbox) SetKey(basePath string) error {
 	}
 
 	sb.Lock()
+	if sb.inDelete {
+		sb.Unlock()
+		return types.ForbiddenErrorf("failed to SetKey: sandbox %q delete in progress", sb.id)
+	}
 	oldosSbox := sb.osSbox
 	sb.Unlock()
 
@@ -674,7 +695,9 @@ func (sb *sandbox) EnableService() (err error) {
 	logrus.Debugf("EnableService %s START", sb.containerID)
 	defer func() {
 		if err != nil {
-			sb.DisableService()
+			if err2 := sb.DisableService(); err2 != nil {
+				logrus.WithError(err2).WithField("origError", err).Error("Error while disabling service after original error")
+			}
 		}
 	}()
 	for _, ep := range sb.getConnectedEndpoints() {
@@ -722,7 +745,16 @@ func releaseOSSboxResources(osSbox osl.Sandbox, ep *endpoint) {
 
 	ep.Lock()
 	joinInfo := ep.joinInfo
+	vip := ep.virtualIP
+	lbModeIsDSR := ep.network.loadBalancerMode == loadBalancerModeDSR
 	ep.Unlock()
+
+	if len(vip) > 0 && lbModeIsDSR {
+		ipNet := &net.IPNet{IP: vip, Mask: net.CIDRMask(32, 32)}
+		if err := osSbox.RemoveAliasIP(osSbox.GetLoopbackIfaceName(), ipNet); err != nil {
+			logrus.WithError(err).Debugf("failed to remove virtual ip %v to loopback", ipNet)
+		}
+	}
 
 	if joinInfo == nil {
 		return
@@ -750,7 +782,9 @@ func (sb *sandbox) releaseOSSbox() {
 		releaseOSSboxResources(osSbox, ep)
 	}
 
-	osSbox.Destroy()
+	if err := osSbox.Destroy(); err != nil {
+		logrus.WithError(err).Error("Error destroying os sandbox")
+	}
 }
 
 func (sb *sandbox) restoreOslSandbox() error {
@@ -759,7 +793,6 @@ func (sb *sandbox) restoreOslSandbox() error {
 	// restore osl sandbox
 	Ifaces := make(map[string][]osl.IfaceOption)
 	for _, ep := range sb.endpoints {
-		var ifaceOptions []osl.IfaceOption
 		ep.Lock()
 		joinInfo := ep.joinInfo
 		i := ep.iface
@@ -770,7 +803,10 @@ func (sb *sandbox) restoreOslSandbox() error {
 			continue
 		}
 
-		ifaceOptions = append(ifaceOptions, sb.osSbox.InterfaceOptions().Address(i.addr), sb.osSbox.InterfaceOptions().Routes(i.routes))
+		ifaceOptions := []osl.IfaceOption{
+			sb.osSbox.InterfaceOptions().Address(i.addr),
+			sb.osSbox.InterfaceOptions().Routes(i.routes),
+		}
 		if i.addrv6 != nil && i.addrv6.IP.To16() != nil {
 			ifaceOptions = append(ifaceOptions, sb.osSbox.InterfaceOptions().AddressIPv6(i.addrv6))
 		}
@@ -780,11 +816,7 @@ func (sb *sandbox) restoreOslSandbox() error {
 		if len(i.llAddrs) != 0 {
 			ifaceOptions = append(ifaceOptions, sb.osSbox.InterfaceOptions().LinkLocalAddresses(i.llAddrs))
 		}
-		if len(ep.virtualIP) != 0 {
-			vipAlias := &net.IPNet{IP: ep.virtualIP, Mask: net.CIDRMask(32, 32)}
-			ifaceOptions = append(ifaceOptions, sb.osSbox.InterfaceOptions().IPAliases([]*net.IPNet{vipAlias}))
-		}
-		Ifaces[fmt.Sprintf("%s+%s", i.srcName, i.dstPrefix)] = ifaceOptions
+		Ifaces[i.srcName+i.dstPrefix] = ifaceOptions
 		if joinInfo != nil {
 			routes = append(routes, joinInfo.StaticRoutes...)
 		}
@@ -799,8 +831,7 @@ func (sb *sandbox) restoreOslSandbox() error {
 	}
 
 	// restore osl sandbox
-	err := sb.osSbox.Restore(Ifaces, routes, gwep.joinInfo.gw, gwep.joinInfo.gw6)
-	return err
+	return sb.osSbox.Restore(Ifaces, routes, gwep.joinInfo.gw, gwep.joinInfo.gw6)
 }
 
 func (sb *sandbox) populateNetworkResources(ep *endpoint) error {
@@ -815,6 +846,7 @@ func (sb *sandbox) populateNetworkResources(ep *endpoint) error {
 	ep.Lock()
 	joinInfo := ep.joinInfo
 	i := ep.iface
+	lbModeIsDSR := ep.network.loadBalancerMode == loadBalancerModeDSR
 	ep.Unlock()
 
 	if ep.needResolver() {
@@ -831,16 +863,24 @@ func (sb *sandbox) populateNetworkResources(ep *endpoint) error {
 		if len(i.llAddrs) != 0 {
 			ifaceOptions = append(ifaceOptions, sb.osSbox.InterfaceOptions().LinkLocalAddresses(i.llAddrs))
 		}
-		if len(ep.virtualIP) != 0 {
-			vipAlias := &net.IPNet{IP: ep.virtualIP, Mask: net.CIDRMask(32, 32)}
-			ifaceOptions = append(ifaceOptions, sb.osSbox.InterfaceOptions().IPAliases([]*net.IPNet{vipAlias}))
-		}
 		if i.mac != nil {
 			ifaceOptions = append(ifaceOptions, sb.osSbox.InterfaceOptions().MacAddress(i.mac))
 		}
 
 		if err := sb.osSbox.AddInterface(i.srcName, i.dstPrefix, ifaceOptions...); err != nil {
 			return fmt.Errorf("failed to add interface %s to sandbox: %v", i.srcName, err)
+		}
+
+		if len(ep.virtualIP) > 0 && lbModeIsDSR {
+			if sb.loadBalancerNID == "" {
+				if err := sb.osSbox.DisableARPForVIP(i.srcName); err != nil {
+					return fmt.Errorf("failed disable ARP for VIP: %v", err)
+				}
+			}
+			ipNet := &net.IPNet{IP: ep.virtualIP, Mask: net.CIDRMask(32, 32)}
+			if err := sb.osSbox.AddAliasIP(sb.osSbox.GetLoopbackIfaceName(), ipNet); err != nil {
+				return fmt.Errorf("failed to add virtual ip %v to loopback: %v", ipNet, err)
+			}
 		}
 	}
 
@@ -869,7 +909,7 @@ func (sb *sandbox) populateNetworkResources(ep *endpoint) error {
 	// information including gateway and other routes so that
 	// loadbalancers are populated all the network state is in
 	// place in the sandbox.
-	sb.populateLoadbalancers(ep)
+	sb.populateLoadBalancers(ep)
 
 	// Only update the store if we did not come here as part of
 	// sandbox delete. If we came here as part of delete then do
@@ -923,7 +963,14 @@ func (sb *sandbox) clearNetworkResources(origEp *endpoint) error {
 			break
 		}
 	}
-	heap.Remove(&sb.endpoints, index)
+
+	if index == -1 {
+		logrus.Warnf("Endpoint %s has already been deleted", ep.Name())
+		sb.Unlock()
+		return nil
+	}
+
+	sb.removeEndpointRaw(ep)
 	for _, e := range sb.endpoints {
 		if len(e.Gateway()) > 0 {
 			gwepAfter = e
@@ -934,7 +981,9 @@ func (sb *sandbox) clearNetworkResources(origEp *endpoint) error {
 	sb.Unlock()
 
 	if gwepAfter != nil && gwepBefore != gwepAfter {
-		sb.updateGateway(gwepAfter)
+		if err := sb.updateGateway(gwepAfter); err != nil {
+			return err
+		}
 	}
 
 	// Only update the store if we did not come here as part of
@@ -946,13 +995,6 @@ func (sb *sandbox) clearNetworkResources(origEp *endpoint) error {
 	}
 
 	return nil
-}
-
-func (sb *sandbox) isEndpointPopulated(ep *endpoint) bool {
-	sb.Lock()
-	_, ok := sb.populatedEndpoints[ep.ID()]
-	sb.Unlock()
-	return ok
 }
 
 // joinLeaveStart waits to ensure there are no joins or leaves in progress and
@@ -983,13 +1025,6 @@ func (sb *sandbox) joinLeaveEnd() {
 		close(sb.joinLeaveDone)
 		sb.joinLeaveDone = nil
 	}
-}
-
-func (sb *sandbox) hasPortConfigs() bool {
-	opts := sb.Labels()
-	_, hasExpPorts := opts[netlabel.ExposedPorts]
-	_, hasPortMaps := opts[netlabel.PortMap]
-	return hasExpPorts || hasPortMaps
 }
 
 // OptionHostname function returns an option setter for hostname option to
@@ -1080,8 +1115,8 @@ func OptionDNSOptions(options string) SandboxOption {
 	}
 }
 
-// OptionUseDefaultSandbox function returns an option setter for using default sandbox to
-// be passed to container Create method.
+// OptionUseDefaultSandbox function returns an option setter for using default sandbox
+// (host namespace) to be passed to container Create method.
 func OptionUseDefaultSandbox() SandboxOption {
 	return func(sb *sandbox) {
 		sb.config.useDefaultSandBox = true
@@ -1145,83 +1180,82 @@ func OptionPortMapping(portBindings []types.PortBinding) SandboxOption {
 func OptionIngress() SandboxOption {
 	return func(sb *sandbox) {
 		sb.ingress = true
+		sb.oslTypes = append(sb.oslTypes, osl.SandboxTypeIngress)
 	}
 }
 
-func (eh epHeap) Len() int { return len(eh) }
+// OptionLoadBalancer function returns an option setter for marking a
+// sandbox as a load balancer sandbox.
+func OptionLoadBalancer(nid string) SandboxOption {
+	return func(sb *sandbox) {
+		sb.loadBalancerNID = nid
+		sb.oslTypes = append(sb.oslTypes, osl.SandboxTypeLoadBalancer)
+	}
+}
 
-func (eh epHeap) Less(i, j int) bool {
+// <=> Returns true if a < b, false if a > b and advances to next level if a == b
+// epi.prio <=> epj.prio           # 2 < 1
+// epi.gw <=> epj.gw               # non-gw < gw
+// epi.internal <=> epj.internal   # non-internal < internal
+// epi.joininfo <=> epj.joininfo   # ipv6 < ipv4
+// epi.name <=> epj.name           # bar < foo
+func (epi *endpoint) Less(epj *endpoint) bool {
 	var (
-		cip, cjp int
-		ok       bool
+		prioi, prioj int
 	)
 
-	ci, _ := eh[i].getSandbox()
-	cj, _ := eh[j].getSandbox()
+	sbi, _ := epi.getSandbox()
+	sbj, _ := epj.getSandbox()
 
-	epi := eh[i]
-	epj := eh[j]
-
-	if epi.endpointInGWNetwork() {
-		return false
+	// Prio defaults to 0
+	if sbi != nil {
+		prioi = sbi.epPriority[epi.ID()]
+	}
+	if sbj != nil {
+		prioj = sbj.epPriority[epj.ID()]
 	}
 
-	if epj.endpointInGWNetwork() {
-		return true
+	if prioi != prioj {
+		return prioi > prioj
 	}
 
-	if epi.getNetwork().Internal() {
-		return false
+	gwi := epi.endpointInGWNetwork()
+	gwj := epj.endpointInGWNetwork()
+	if gwi != gwj {
+		return gwj
 	}
 
-	if epj.getNetwork().Internal() {
-		return true
+	inti := epi.getNetwork().Internal()
+	intj := epj.getNetwork().Internal()
+	if inti != intj {
+		return intj
 	}
 
-	if epi.joinInfo != nil && epj.joinInfo != nil {
-		if (epi.joinInfo.gw != nil && epi.joinInfo.gw6 != nil) &&
-			(epj.joinInfo.gw == nil || epj.joinInfo.gw6 == nil) {
-			return true
+	jii := 0
+	if epi.joinInfo != nil {
+		if epi.joinInfo.gw != nil {
+			jii = jii + 1
 		}
-		if (epj.joinInfo.gw != nil && epj.joinInfo.gw6 != nil) &&
-			(epi.joinInfo.gw == nil || epi.joinInfo.gw6 == nil) {
-			return false
-		}
-	}
-
-	if ci != nil {
-		cip, ok = ci.epPriority[eh[i].ID()]
-		if !ok {
-			cip = 0
+		if epi.joinInfo.gw6 != nil {
+			jii = jii + 2
 		}
 	}
 
-	if cj != nil {
-		cjp, ok = cj.epPriority[eh[j].ID()]
-		if !ok {
-			cjp = 0
+	jij := 0
+	if epj.joinInfo != nil {
+		if epj.joinInfo.gw != nil {
+			jij = jij + 1
+		}
+		if epj.joinInfo.gw6 != nil {
+			jij = jij + 2
 		}
 	}
 
-	if cip == cjp {
-		return eh[i].network.Name() < eh[j].network.Name()
+	if jii != jij {
+		return jii > jij
 	}
 
-	return cip > cjp
-}
-
-func (eh epHeap) Swap(i, j int) { eh[i], eh[j] = eh[j], eh[i] }
-
-func (eh *epHeap) Push(x interface{}) {
-	*eh = append(*eh, x.(*endpoint))
-}
-
-func (eh *epHeap) Pop() interface{} {
-	old := *eh
-	n := len(old)
-	x := old[n-1]
-	*eh = old[0 : n-1]
-	return x
+	return epi.network.Name() < epj.network.Name()
 }
 
 func (sb *sandbox) NdotsSet() bool {

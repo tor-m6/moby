@@ -301,14 +301,7 @@ func (cm *cacheManager) GetByBlob(ctx context.Context, desc ocispecs.Descriptor,
 
 	cm.records[id] = rec
 
-	ref := rec.ref(true, descHandlers, nil)
-	if s := unlazySessionOf(opts...); s != nil {
-		if err := ref.unlazy(ctx, ref.descHandlers, ref.progress, s, true); err != nil {
-			return nil, err
-		}
-	}
-
-	return ref, nil
+	return rec.ref(true, descHandlers, nil), nil
 }
 
 // init loads all snapshots from metadata state and tries to load the records

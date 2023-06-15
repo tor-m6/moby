@@ -3,7 +3,6 @@ package ioutils // import "github.com/docker/docker/pkg/ioutils"
 import (
 	"io"
 	"os"
-	"github.com/docker/docker/myos"
 	"path/filepath"
 )
 
@@ -11,7 +10,7 @@ import (
 // temporary file and closing it atomically changes the temporary file to
 // destination path. Writing and closing concurrently is not allowed.
 func NewAtomicFileWriter(filename string, perm os.FileMode) (io.WriteCloser, error) {
-	f, err := myos.CreateTemp(filepath.Dir(filename), ".tmp-"+filepath.Base(filename))
+	f, err := os.CreateTemp(filepath.Dir(filename), ".tmp-"+filepath.Base(filename))
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +93,7 @@ type AtomicWriteSet struct {
 // commit. If no temporary directory is given the system
 // default is used.
 func NewAtomicWriteSet(tmpDir string) (*AtomicWriteSet, error) {
-	td, err := myos.MkdirTemp(tmpDir, "write-set-")
+	td, err := os.MkdirTemp(tmpDir, "write-set-")
 	if err != nil {
 		return nil, err
 	}

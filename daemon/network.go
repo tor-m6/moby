@@ -14,7 +14,7 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/container"
-	// clustertypes "github.com/docker/docker/daemon/cluster/provider"
+	clustertypes "github.com/docker/docker/daemon/cluster/provider"
 	internalnetwork "github.com/docker/docker/daemon/network"
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/libnetwork"
@@ -22,7 +22,7 @@ import (
 	"github.com/docker/docker/libnetwork/driverapi"
 	"github.com/docker/docker/libnetwork/ipamapi"
 	"github.com/docker/docker/libnetwork/netlabel"
-	// "github.com/docker/docker/libnetwork/networkdb"
+	"github.com/docker/docker/libnetwork/networkdb"
 	"github.com/docker/docker/libnetwork/options"
 	networktypes "github.com/docker/docker/libnetwork/types"
 	"github.com/docker/docker/opts"
@@ -50,7 +50,7 @@ func (daemon *Daemon) NetworkControllerEnabled() bool {
 }
 
 // NetworkController returns the network controller created by the daemon.
-func (daemon *Daemon) NetworkController() *libnetwork.Controller {
+func (daemon *Daemon) NetworkController() libnetwork.NetworkController {
 	return daemon.netController
 }
 
@@ -140,107 +140,107 @@ func (daemon *Daemon) getAllNetworks() []libnetwork.Network {
 	return c.Networks()
 }
 
-// type ingressJob struct {
-// 	create  *clustertypes.NetworkCreateRequest
-// 	ip      net.IP
-// 	jobDone chan struct{}
-// }
+type ingressJob struct {
+	create  *clustertypes.NetworkCreateRequest
+	ip      net.IP
+	jobDone chan struct{}
+}
 
-// var (
-// 	ingressWorkerOnce  sync.Once
-// 	ingressJobsChannel chan *ingressJob
-// 	ingressID          string
-// )
+var (
+	ingressWorkerOnce  sync.Once
+	ingressJobsChannel chan *ingressJob
+	ingressID          string
+)
 
-// func (daemon *Daemon) startIngressWorker() {
-// 	ingressJobsChannel = make(chan *ingressJob, 100)
-// 	go func() {
-// 		//nolint: gosimple
-// 		for {
-// 			select {
-// 			case r := <-ingressJobsChannel:
-// 				if r.create != nil {
-// 					daemon.setupIngress(r.create, r.ip, ingressID)
-// 					ingressID = r.create.ID
-// 				} else {
-// 					daemon.releaseIngress(ingressID)
-// 					ingressID = ""
-// 				}
-// 				close(r.jobDone)
-// 			}
-// 		}
-// 	}()
-// }
+func (daemon *Daemon) startIngressWorker() {
+	ingressJobsChannel = make(chan *ingressJob, 100)
+	go func() {
+		//nolint: gosimple
+		for {
+			select {
+			case r := <-ingressJobsChannel:
+				if r.create != nil {
+					daemon.setupIngress(r.create, r.ip, ingressID)
+					ingressID = r.create.ID
+				} else {
+					daemon.releaseIngress(ingressID)
+					ingressID = ""
+				}
+				close(r.jobDone)
+			}
+		}
+	}()
+}
 
-// // enqueueIngressJob adds a ingress add/rm request to the worker queue.
-// // It guarantees the worker is started.
-// func (daemon *Daemon) enqueueIngressJob(job *ingressJob) {
-// 	ingressWorkerOnce.Do(daemon.startIngressWorker)
-// 	ingressJobsChannel <- job
-// }
+// enqueueIngressJob adds a ingress add/rm request to the worker queue.
+// It guarantees the worker is started.
+func (daemon *Daemon) enqueueIngressJob(job *ingressJob) {
+	ingressWorkerOnce.Do(daemon.startIngressWorker)
+	ingressJobsChannel <- job
+}
 
-// // SetupIngress setups ingress networking.
-// // The function returns a channel which will signal the caller when the programming is completed.
-// func (daemon *Daemon) SetupIngress(create clustertypes.NetworkCreateRequest, nodeIP string) (<-chan struct{}, error) {
-// 	ip, _, err := net.ParseCIDR(nodeIP)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	done := make(chan struct{})
-// 	daemon.enqueueIngressJob(&ingressJob{&create, ip, done})
-// 	return done, nil
-// }
+// SetupIngress setups ingress networking.
+// The function returns a channel which will signal the caller when the programming is completed.
+func (daemon *Daemon) SetupIngress(create clustertypes.NetworkCreateRequest, nodeIP string) (<-chan struct{}, error) {
+	ip, _, err := net.ParseCIDR(nodeIP)
+	if err != nil {
+		return nil, err
+	}
+	done := make(chan struct{})
+	daemon.enqueueIngressJob(&ingressJob{&create, ip, done})
+	return done, nil
+}
 
-// // ReleaseIngress releases the ingress networking.
-// // The function returns a channel which will signal the caller when the programming is completed.
-// func (daemon *Daemon) ReleaseIngress() (<-chan struct{}, error) {
-// 	done := make(chan struct{})
-// 	daemon.enqueueIngressJob(&ingressJob{nil, nil, done})
-// 	return done, nil
-// }
+// ReleaseIngress releases the ingress networking.
+// The function returns a channel which will signal the caller when the programming is completed.
+func (daemon *Daemon) ReleaseIngress() (<-chan struct{}, error) {
+	done := make(chan struct{})
+	daemon.enqueueIngressJob(&ingressJob{nil, nil, done})
+	return done, nil
+}
 
-// func (daemon *Daemon) setupIngress(create *clustertypes.NetworkCreateRequest, ip net.IP, staleID string) {
-// 	controller := daemon.netController
-// 	controller.AgentInitWait()
+func (daemon *Daemon) setupIngress(create *clustertypes.NetworkCreateRequest, ip net.IP, staleID string) {
+	controller := daemon.netController
+	controller.AgentInitWait()
 
-// 	if staleID != "" && staleID != create.ID {
-// 		daemon.releaseIngress(staleID)
-// 	}
+	if staleID != "" && staleID != create.ID {
+		daemon.releaseIngress(staleID)
+	}
 
-// 	if _, err := daemon.createNetwork(create.NetworkCreateRequest, create.ID, true); err != nil {
-// 		// If it is any other error other than already
-// 		// exists error log error and return.
-// 		if _, ok := err.(libnetwork.NetworkNameError); !ok {
-// 			logrus.Errorf("Failed creating ingress network: %v", err)
-// 			return
-// 		}
-// 		// Otherwise continue down the call to create or recreate sandbox.
-// 	}
+	if _, err := daemon.createNetwork(create.NetworkCreateRequest, create.ID, true); err != nil {
+		// If it is any other error other than already
+		// exists error log error and return.
+		if _, ok := err.(libnetwork.NetworkNameError); !ok {
+			logrus.Errorf("Failed creating ingress network: %v", err)
+			return
+		}
+		// Otherwise continue down the call to create or recreate sandbox.
+	}
 
-// 	_, err := daemon.GetNetworkByID(create.ID)
-// 	if err != nil {
-// 		logrus.Errorf("Failed getting ingress network by id after creating: %v", err)
-// 	}
-// }
+	_, err := daemon.GetNetworkByID(create.ID)
+	if err != nil {
+		logrus.Errorf("Failed getting ingress network by id after creating: %v", err)
+	}
+}
 
-// func (daemon *Daemon) releaseIngress(id string) {
-// 	controller := daemon.netController
+func (daemon *Daemon) releaseIngress(id string) {
+	controller := daemon.netController
 
-// 	if id == "" {
-// 		return
-// 	}
+	if id == "" {
+		return
+	}
 
-// 	n, err := controller.NetworkByID(id)
-// 	if err != nil {
-// 		logrus.Errorf("failed to retrieve ingress network %s: %v", id, err)
-// 		return
-// 	}
+	n, err := controller.NetworkByID(id)
+	if err != nil {
+		logrus.Errorf("failed to retrieve ingress network %s: %v", id, err)
+		return
+	}
 
-// 	if err := n.Delete(libnetwork.NetworkDeleteOptionRemoveLB); err != nil {
-// 		logrus.Errorf("Failed to delete ingress network %s: %v", n.ID(), err)
-// 		return
-// 	}
-// }
+	if err := n.Delete(libnetwork.NetworkDeleteOptionRemoveLB); err != nil {
+		logrus.Errorf("Failed to delete ingress network %s: %v", n.ID(), err)
+		return
+	}
+}
 
 // SetNetworkBootstrapKeys sets the bootstrap keys.
 func (daemon *Daemon) SetNetworkBootstrapKeys(keys []*networktypes.EncryptionKey) error {
@@ -258,9 +258,9 @@ func (daemon *Daemon) UpdateAttachment(networkName, networkID, containerID strin
 		return fmt.Errorf("cluster provider is not initialized")
 	}
 
-	if err := daemon.clusterProvider.UpdateAttachment(networkName, containerID, config); err != nil {
-		return daemon.clusterProvider.UpdateAttachment(networkID, containerID, config)
-	}
+	// if err := daemon.clusterProvider.UpdateAttachment(networkName, containerID, config); err != nil {
+	// 	return daemon.clusterProvider.UpdateAttachment(networkID, containerID, config)
+	// }
 
 	return nil
 }
@@ -276,14 +276,18 @@ func (daemon *Daemon) WaitForDetachment(ctx context.Context, networkName, networ
 }
 
 // CreateManagedNetwork creates an agent network.
-// func (daemon *Daemon) CreateManagedNetwork(create clustertypes.NetworkCreateRequest) error {
-// 	_, err := daemon.createNetwork(create.NetworkCreateRequest, create.ID, true)
-// 	return err
-// }
+func (daemon *Daemon) CreateManagedNetwork(create clustertypes.NetworkCreateRequest) error {
+	_, err := daemon.createNetwork(create.NetworkCreateRequest, create.ID, true)
+	return err
+}
 
 // CreateNetwork creates a network with the given name, driver and other optional parameters
 func (daemon *Daemon) CreateNetwork(create types.NetworkCreateRequest) (*types.NetworkCreateResponse, error) {
-	return daemon.createNetwork(create, "", false)
+	resp, err := daemon.createNetwork(create, "", false)
+	if err != nil {
+		return nil, err
+	}
+	return resp, err
 }
 
 func (daemon *Daemon) createNetwork(create types.NetworkCreateRequest, id string, agent bool) (*types.NetworkCreateResponse, error) {
@@ -315,22 +319,9 @@ func (daemon *Daemon) createNetwork(create types.NetworkCreateRequest, id string
 		driver = c.Config().DefaultDriver
 	}
 
-	networkOptions := make(map[string]string)
-	for k, v := range create.Options {
-		networkOptions[k] = v
-	}
-	if defaultOpts, ok := daemon.configStore.DefaultNetworkOpts[driver]; create.ConfigFrom == nil && ok {
-		for k, v := range defaultOpts {
-			if _, ok := networkOptions[k]; !ok {
-				logrus.WithFields(logrus.Fields{"driver": driver, "network": id, k: v}).Debug("Applying network default option")
-				networkOptions[k] = v
-			}
-		}
-	}
-
 	nwOptions := []libnetwork.NetworkOption{
 		libnetwork.NetworkOptionEnableIPv6(create.EnableIPv6),
-		libnetwork.NetworkOptionDriverOpts(networkOptions),
+		libnetwork.NetworkOptionDriverOpts(create.Options),
 		libnetwork.NetworkOptionLabels(create.Labels),
 		libnetwork.NetworkOptionAttachable(create.Attachable),
 		libnetwork.NetworkOptionIngress(create.Ingress),
@@ -373,7 +364,7 @@ func (daemon *Daemon) createNetwork(create types.NetworkCreateRequest, id string
 
 	n, err := c.NewNetwork(driver, create.Name, id, nwOptions...)
 	if err != nil {
-		if errors.Is(err, libnetwork.ErrDataStoreNotInitialized) {
+		if _, ok := err.(libnetwork.ErrDataStoreNotInitialized); ok {
 			//nolint: revive
 			return nil, errors.New("This node is not a swarm manager. Use \"docker swarm init\" or \"docker swarm join\" to connect this node to swarm and try again.")
 		}
@@ -438,15 +429,15 @@ func getIpamConfig(data []network.IPAMConfig) ([]*libnetwork.IpamConf, []*libnet
 }
 
 // UpdateContainerServiceConfig updates a service configuration.
-// func (daemon *Daemon) UpdateContainerServiceConfig(containerName string, serviceConfig *clustertypes.ServiceConfig) error {
-// 	ctr, err := daemon.GetContainer(containerName)
-// 	if err != nil {
-// 		return err
-// 	}
+func (daemon *Daemon) UpdateContainerServiceConfig(containerName string, serviceConfig *clustertypes.ServiceConfig) error {
+	ctr, err := daemon.GetContainer(containerName)
+	if err != nil {
+		return err
+	}
 
-// 	ctr.NetworkSettings.Service = serviceConfig
-// 	return nil
-// }
+	ctr.NetworkSettings.Service = serviceConfig
+	return nil
+}
 
 // ConnectContainerToNetwork connects the given container to the given
 // network. If either cannot be found, an err is returned. If the
@@ -619,9 +610,9 @@ func buildNetworkResource(nw libnetwork.Network) types.NetworkResource {
 	}
 
 	peers := info.Peers()
-	// if len(peers) != 0 {
-	// 	r.Peers = buildPeerInfoResources(peers)
-	// }
+	if len(peers) != 0 {
+		r.Peers = buildPeerInfoResources(peers)
+	}
 
 	return r
 }
@@ -670,16 +661,16 @@ func buildDetailedNetworkResources(r *types.NetworkResource, nw libnetwork.Netwo
 	}
 }
 
-// func buildPeerInfoResources(peers []networkdb.PeerInfo) []network.PeerInfo {
-// 	peerInfo := make([]network.PeerInfo, 0, len(peers))
-// 	for _, peer := range peers {
-// 		peerInfo = append(peerInfo, network.PeerInfo{
-// 			Name: peer.Name,
-// 			IP:   peer.IP,
-// 		})
-// 	}
-// 	return peerInfo
-// }
+func buildPeerInfoResources(peers []networkdb.PeerInfo) []network.PeerInfo {
+	peerInfo := make([]network.PeerInfo, 0, len(peers))
+	for _, peer := range peers {
+		peerInfo = append(peerInfo, network.PeerInfo{
+			Name: peer.Name,
+			IP:   peer.IP,
+		})
+	}
+	return peerInfo
+}
 
 func buildIpamResources(r *types.NetworkResource, nwInfo libnetwork.NetworkInfo) {
 	id, opts, ipv4conf, ipv6conf := nwInfo.IpamConfig()
@@ -795,7 +786,7 @@ func (daemon *Daemon) clearAttachableNetworks() {
 }
 
 // buildCreateEndpointOptions builds endpoint options from a given network.
-func buildCreateEndpointOptions(c *container.Container, n libnetwork.Network, epConfig *network.EndpointSettings, sb *libnetwork.Sandbox, daemonDNS []string) ([]libnetwork.EndpointOption, error) {
+func buildCreateEndpointOptions(c *container.Container, n libnetwork.Network, epConfig *network.EndpointSettings, sb libnetwork.Sandbox, daemonDNS []string) ([]libnetwork.EndpointOption, error) {
 	var (
 		bindings      = make(nat.PortMap)
 		pbList        []networktypes.PortBinding
@@ -967,7 +958,7 @@ func buildCreateEndpointOptions(c *container.Container, n libnetwork.Network, ep
 }
 
 // getPortMapInfo retrieves the current port-mapping programmed for the given sandbox
-func getPortMapInfo(sb *libnetwork.Sandbox) nat.PortMap {
+func getPortMapInfo(sb libnetwork.Sandbox) nat.PortMap {
 	pm := nat.PortMap{}
 	if sb == nil {
 		return pm
@@ -982,7 +973,7 @@ func getPortMapInfo(sb *libnetwork.Sandbox) nat.PortMap {
 	return pm
 }
 
-func getEndpointPortMapInfo(ep *libnetwork.Endpoint) (nat.PortMap, error) {
+func getEndpointPortMapInfo(ep libnetwork.Endpoint) (nat.PortMap, error) {
 	pm := nat.PortMap{}
 	driverInfo, err := ep.DriverInfo()
 	if err != nil {
@@ -1026,7 +1017,7 @@ func getEndpointPortMapInfo(ep *libnetwork.Endpoint) (nat.PortMap, error) {
 }
 
 // buildEndpointInfo sets endpoint-related fields on container.NetworkSettings based on the provided network and endpoint.
-func buildEndpointInfo(networkSettings *internalnetwork.Settings, n libnetwork.Network, ep *libnetwork.Endpoint) error {
+func buildEndpointInfo(networkSettings *internalnetwork.Settings, n libnetwork.Network, ep libnetwork.Endpoint) error {
 	if ep == nil {
 		return errors.New("endpoint cannot be nil")
 	}

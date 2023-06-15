@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Sirupsen/logrus"
-	"github.com/docker/libnetwork/netlabel"
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/netlabel"
+	"github.com/docker/docker/libnetwork/types"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -30,7 +30,6 @@ var procGwNetwork = make(chan (bool), 1)
 */
 
 func (sb *sandbox) setupDefaultGW() error {
-
 	// check if the container already has a GW endpoint
 	if ep := sb.getEndpointInGWNetwork(); ep != nil {
 		return nil
@@ -49,9 +48,11 @@ func (sb *sandbox) setupDefaultGW() error {
 
 	createOptions := []EndpointOption{CreateOptionAnonymous()}
 
-	eplen := gwEPlen
-	if len(sb.containerID) < gwEPlen {
-		eplen = len(sb.containerID)
+	var gwName string
+	if len(sb.containerID) <= gwEPlen {
+		gwName = "gateway_" + sb.containerID
+	} else {
+		gwName = "gateway_" + sb.id[:gwEPlen]
 	}
 
 	sbLabels := sb.Labels()
@@ -69,7 +70,7 @@ func (sb *sandbox) setupDefaultGW() error {
 		createOptions = append(createOptions, epOption)
 	}
 
-	newEp, err := n.CreateEndpoint("gateway_"+sb.containerID[0:eplen], createOptions...)
+	newEp, err := n.CreateEndpoint(gwName, createOptions...)
 	if err != nil {
 		return fmt.Errorf("container %s: endpoint create on GW Network failed: %v", sb.containerID, err)
 	}
@@ -158,18 +159,6 @@ func (ep *endpoint) endpointInGWNetwork() bool {
 		return true
 	}
 	return false
-}
-
-func (sb *sandbox) getEPwithoutGateway() *endpoint {
-	for _, ep := range sb.getConnectedEndpoints() {
-		if ep.getNetwork().Type() == "null" || ep.getNetwork().Type() == "host" {
-			continue
-		}
-		if len(ep.Gateway()) == 0 {
-			return ep
-		}
-	}
-	return nil
 }
 
 // Looks for the default gw network and creates it if not there.

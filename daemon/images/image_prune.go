@@ -46,9 +46,13 @@ func (i *ImageService) ImagesPrune(ctx context.Context, pruneFilters filters.Arg
 
 	rep := &types.ImagesPruneReport{}
 
-	danglingOnly, err := pruneFilters.GetBoolOrDefault("dangling", true)
-	if err != nil {
-		return nil, err
+	danglingOnly := true
+	if pruneFilters.Contains("dangling") {
+		if pruneFilters.ExactMatch("dangling", "false") || pruneFilters.ExactMatch("dangling", "0") {
+			danglingOnly = false
+		} else if !pruneFilters.ExactMatch("dangling", "true") && !pruneFilters.ExactMatch("dangling", "1") {
+			return nil, invalidFilter{"dangling", pruneFilters.Get("dangling")}
+		}
 	}
 
 	until, err := getUntilFromPruneFilters(pruneFilters)
@@ -109,7 +113,7 @@ deleteImagesLoop:
 					}
 				}
 
-				// Only delete if it has no references which is a valid NamedTagged.
+				// Only delete if it's untagged (i.e. repo:<none>)
 				shouldDelete = !hasTag
 			}
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/cio"
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/libcontainerd"
 	libcontainerdtypes "github.com/docker/docker/libcontainerd/types"
@@ -23,12 +24,11 @@ type ExitHandler interface {
 }
 
 // New creates a new containerd plugin executor
-func New(ctx context.Context, rootDir string, cli *containerd.Client, ns string, exitHandler ExitHandler, shim string, shimOpts interface{}) (*Executor, error) {
+func New(ctx context.Context, rootDir string, cli *containerd.Client, ns string, exitHandler ExitHandler, runtime types.Runtime) (*Executor, error) {
 	e := &Executor{
 		rootDir:     rootDir,
 		exitHandler: exitHandler,
-		shim:        shim,
-		shimOpts:    shimOpts,
+		runtime:     runtime,
 		plugins:     make(map[string]*c8dPlugin),
 	}
 
@@ -45,8 +45,7 @@ type Executor struct {
 	rootDir     string
 	client      libcontainerdtypes.Client
 	exitHandler ExitHandler
-	shim        string
-	shimOpts    interface{}
+	runtime     types.Runtime
 
 	mu      sync.Mutex // Guards plugins map
 	plugins map[string]*c8dPlugin
@@ -76,7 +75,7 @@ func (p c8dPlugin) deleteTaskAndContainer(ctx context.Context) {
 func (e *Executor) Create(id string, spec specs.Spec, stdout, stderr io.WriteCloser) error {
 	ctx := context.Background()
 	log := logrus.WithField("plugin", id)
-	ctr, err := libcontainerd.ReplaceContainer(ctx, e.client, id, &spec, e.shim, e.shimOpts)
+	ctr, err := libcontainerd.ReplaceContainer(ctx, e.client, id, &spec, e.runtime.Shim.Binary, e.runtime.Shim.Opts)
 	if err != nil {
 		return errors.Wrap(err, "error creating containerd container for plugin")
 	}

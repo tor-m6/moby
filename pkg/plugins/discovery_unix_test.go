@@ -16,7 +16,7 @@ import (
 
 func TestLocalSocket(t *testing.T) {
 	// TODO Windows: Enable a similar version for Windows named pipes
-	tmpdir, unregister, r := Setup(t)
+	tmpdir, unregister := Setup(t)
 	defer unregister()
 
 	cases := []string{
@@ -34,6 +34,7 @@ func TestLocalSocket(t *testing.T) {
 			t.Fatal(err)
 		}
 
+		r := newLocalRegistry()
 		p, err := r.Plugin("echo")
 		if err != nil {
 			t.Fatal(err)
@@ -63,10 +64,10 @@ func TestLocalSocket(t *testing.T) {
 }
 
 func TestScan(t *testing.T) {
-	tmpdir, unregister, r := Setup(t)
+	tmpdir, unregister := Setup(t)
 	defer unregister()
 
-	pluginNames, err := r.Scan()
+	pluginNames, err := Scan()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,10 +89,11 @@ func TestScan(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	r := newLocalRegistry()
 	p, err := r.Plugin(name)
 	assert.NilError(t, err)
 
-	pluginNamesNotEmpty, err := r.Scan()
+	pluginNamesNotEmpty, err := Scan()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +106,7 @@ func TestScan(t *testing.T) {
 }
 
 func TestScanNotPlugins(t *testing.T) {
-	tmpdir, unregister, localRegistry := Setup(t)
+	tmpdir, unregister := Setup(t)
 	defer unregister()
 
 	// not that `Setup()` above sets the sockets path and spec path dirs, which
@@ -129,7 +131,7 @@ func TestScanNotPlugins(t *testing.T) {
 	}
 	defer f.Close()
 
-	names, err := localRegistry.Scan()
+	names, err := Scan()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +146,7 @@ func TestScanNotPlugins(t *testing.T) {
 	}
 	defer f.Close()
 
-	names, err = localRegistry.Scan()
+	names, err = Scan()
 	if err != nil {
 		t.Fatal(err)
 	}

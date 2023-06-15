@@ -6,8 +6,8 @@ import (
 
 	"encoding/json"
 
-	"github.com/Sirupsen/logrus"
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/types"
+	"github.com/sirupsen/logrus"
 
 	"github.com/Microsoft/hcsshim"
 )
@@ -33,7 +33,7 @@ func (d *driver) peerAdd(nid, eid string, peerIP net.IP, peerIPMask net.IPMask,
 
 		hnsEndpoint := &hcsshim.HNSEndpoint{
 			Name:             eid,
-			VirtualNetwork:   n.hnsId,
+			VirtualNetwork:   n.hnsID,
 			MacAddress:       peerMac.String(),
 			IPAddress:        peerIP,
 			IsRemoteEndpoint: true,
@@ -67,8 +67,7 @@ func (d *driver) peerAdd(nid, eid string, peerIP net.IP, peerIPMask net.IPMask,
 		}
 
 		n.removeEndpointWithAddress(addr)
-
-		hnsresponse, err := hcsshim.HNSEndpointRequest("POST", "", string(configurationb))
+		hnsresponse, err := endpointRequest("POST", "", string(configurationb))
 		if err != nil {
 			return err
 		}
@@ -78,7 +77,7 @@ func (d *driver) peerAdd(nid, eid string, peerIP net.IP, peerIPMask net.IPMask,
 			nid:       nid,
 			addr:      addr,
 			mac:       peerMac,
-			profileId: hnsresponse.Id,
+			profileID: hnsresponse.Id,
 			remote:    true,
 		}
 
@@ -108,7 +107,7 @@ func (d *driver) peerDelete(nid, eid string, peerIP net.IP, peerIPMask net.IPMas
 	}
 
 	if updateDb {
-		_, err := hcsshim.HNSEndpointRequest("DELETE", ep.profileId, "")
+		_, err := endpointRequest("DELETE", ep.profileID, "")
 		if err != nil {
 			return err
 		}

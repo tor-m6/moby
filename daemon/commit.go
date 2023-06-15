@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/distribution/reference"
 	"github.com/docker/docker/api/types/backend"
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/builder/dockerfile"
@@ -39,16 +38,16 @@ func merge(userConf, imageConf *containertypes.Config) error {
 	} else {
 		for _, imageEnv := range imageConf.Env {
 			found := false
-			imageEnvKey, _, _ := strings.Cut(imageEnv, "=")
+			imageEnvKey := strings.Split(imageEnv, "=")[0]
 			for _, userEnv := range userConf.Env {
-				userEnvKey, _, _ := strings.Cut(userEnv, "=")
+				userEnvKey := strings.Split(userEnv, "=")[0]
 				if isWindows {
 					// Case insensitive environment variables on Windows
-					found = strings.EqualFold(imageEnvKey, userEnvKey)
-				} else {
-					found = imageEnvKey == userEnvKey
+					imageEnvKey = strings.ToUpper(imageEnvKey)
+					userEnvKey = strings.ToUpper(userEnvKey)
 				}
-				if found {
+				if imageEnvKey == userEnvKey {
+					found = true
 					break
 				}
 			}
@@ -120,7 +119,6 @@ func merge(userConf, imageConf *containertypes.Config) error {
 // applying that config over the existing container config.
 func (daemon *Daemon) CreateImageFromContainer(ctx context.Context, name string, c *backend.CreateImageConfig) (string, error) {
 	start := time.Now()
-
 	container, err := daemon.GetContainer(name)
 	if err != nil {
 		return "", err
@@ -157,7 +155,7 @@ func (daemon *Daemon) CreateImageFromContainer(ctx context.Context, name string,
 		return "", err
 	}
 
-	id, err := daemon.imageService.CommitImage(ctx, backend.CommitConfig{
+	id, err := daemon.imageService.CommitImage(backend.CommitConfig{
 		Author:              c.Author,
 		Comment:             c.Comment,
 		Config:              newConfig,
@@ -171,13 +169,12 @@ func (daemon *Daemon) CreateImageFromContainer(ctx context.Context, name string,
 		return "", err
 	}
 
-	imageRef := ""
-	if c.Tag != nil {
-		err = daemon.imageService.TagImage(ctx, id, c.Tag)
+	var imageRef string
+	if c.Repo != "" {
+		imageRef, err = daemon.imageService.TagImage(string(id), c.Repo, c.Tag)
 		if err != nil {
 			return "", err
 		}
-		imageRef = reference.FamiliarString(c.Tag)
 	}
 	daemon.LogContainerEventWithAttributes(container, "commit", map[string]string{
 		"comment":  c.Comment,

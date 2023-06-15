@@ -290,17 +290,9 @@ func (s *DockerCLILogsSuite) TestLogsFollowGoroutinesWithStdout(c *testing.T) {
 	assert.NilError(c, err)
 	cmd := exec.Command(dockerBinary, "logs", "-f", id)
 	r, w := io.Pipe()
-	defer r.Close()
-	defer w.Close()
-
 	cmd.Stdout = w
 	assert.NilError(c, cmd.Start())
-	defer cmd.Process.Kill()
-
-	finished := make(chan error)
-	go func() {
-		finished <- cmd.Wait()
-	}()
+	go cmd.Wait()
 
 	// Make sure pipe is written to
 	chErr := make(chan error)
@@ -308,15 +300,11 @@ func (s *DockerCLILogsSuite) TestLogsFollowGoroutinesWithStdout(c *testing.T) {
 		b := make([]byte, 1)
 		_, err := r.Read(b)
 		chErr <- err
-		r.Close()
 	}()
-
-	// Check read from pipe succeeded
 	assert.NilError(c, <-chErr)
-
 	assert.NilError(c, cmd.Process.Kill())
-	<-finished
-
+	r.Close()
+	cmd.Wait()
 	// NGoroutines is not updated right away, so we need to wait before failing
 	assert.NilError(c, waitForGoroutines(nroutines))
 }
@@ -330,16 +318,10 @@ func (s *DockerCLILogsSuite) TestLogsFollowGoroutinesNoOutput(c *testing.T) {
 	assert.NilError(c, err)
 	cmd := exec.Command(dockerBinary, "logs", "-f", id)
 	assert.NilError(c, cmd.Start())
-
-	finished := make(chan error)
-	go func() {
-		finished <- cmd.Wait()
-	}()
-
+	go cmd.Wait()
 	time.Sleep(200 * time.Millisecond)
 	assert.NilError(c, cmd.Process.Kill())
-
-	<-finished
+	cmd.Wait()
 
 	// NGoroutines is not updated right away, so we need to wait before failing
 	assert.NilError(c, waitForGoroutines(nroutines))

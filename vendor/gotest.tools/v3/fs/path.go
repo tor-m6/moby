@@ -3,6 +3,7 @@ package fs
 import (
 	"bytes"
 	"io"
+	"io/ioutil"
 	"os"
 
 	"gotest.tools/v3/assert"
@@ -123,7 +124,7 @@ func normalizeID(id int) uint32 {
 	return uint32(id)
 }
 
-var anyFileContent = io.NopCloser(bytes.NewReader(nil))
+var anyFileContent = ioutil.NopCloser(bytes.NewReader(nil))
 
 // MatchAnyFileContent is a PathOp that updates a Manifest so that the file
 // at path may contain any content.

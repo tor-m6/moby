@@ -7,7 +7,7 @@ package ipv4
 import (
 	"net"
 
-	// "golang.org/x/net/bpf"
+	"golang.org/x/net/bpf"
 )
 
 // MulticastTTL returns the time-to-live field value for outgoing
@@ -252,13 +252,13 @@ func (c *dgramOpt) SetICMPFilter(f *ICMPFilter) error {
 // SetBPF attaches a BPF program to the connection.
 //
 // Only supported on Linux.
-// func (c *dgramOpt) SetBPF(filter []bpf.RawInstruction) error {
-// 	if !c.ok() {
-// 		return errInvalidConn
-// 	}
-// 	so, ok := sockOpts[ssoAttachFilter]
-// 	if !ok {
-// 		return errNotImplemented
-// 	}
-// 	return so.setBPF(c.Conn, filter)
-// }
+func (c *dgramOpt) SetBPF(filter []bpf.RawInstruction) error {
+	if !c.ok() {
+		return errInvalidConn
+	}
+	so, ok := sockOpts[ssoAttachFilter]
+	if !ok {
+		return errNotImplemented
+	}
+	return so.setBPF(c.Conn, filter)
+}

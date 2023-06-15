@@ -2,19 +2,19 @@ package bitseq
 
 import (
 	"fmt"
-	"io/ioutil"
 	"math/rand"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/docker/docker/libnetwork/datastore"
 	"github.com/docker/libkv/store"
 	"github.com/docker/libkv/store/boltdb"
-	"github.com/docker/libnetwork/datastore"
-	_ "github.com/docker/libnetwork/testutils"
 )
 
-const (
-	defaultPrefix = "/tmp/libnetwork/test/bitseq"
+var (
+	defaultPrefix = filepath.Join(os.TempDir(), "libnetwork", "test", "bitseq")
 )
 
 func init() {
@@ -22,7 +22,7 @@ func init() {
 }
 
 func randomLocalStore() (datastore.DataStore, error) {
-	tmp, err := ioutil.TempFile("", "libnetwork-")
+	tmp, err := os.CreateTemp("", "libnetwork-")
 	if err != nil {
 		return nil, fmt.Errorf("Error creating temp file: %v", err)
 	}
@@ -32,7 +32,7 @@ func randomLocalStore() (datastore.DataStore, error) {
 	return datastore.NewDataStore(datastore.LocalScope, &datastore.ScopeCfg{
 		Client: datastore.ScopeClientCfg{
 			Provider: "boltdb",
-			Address:  defaultPrefix + tmp.Name(),
+			Address:  filepath.Join(defaultPrefix, filepath.Base(tmp.Name())),
 			Config: &store.Config{
 				Bucket:            "libnetwork",
 				ConnectionTimeout: 3 * time.Second,
@@ -130,8 +130,8 @@ func TestSequenceEqual(t *testing.T) {
 
 		{&sequence{block: 0x12345678, count: 8, next: nil}, &sequence{block: 0x12345678, count: 8}, true},
 		{&sequence{block: 0x12345678, count: 8, next: nil}, &sequence{block: 0x12345678, count: 9}, false},
-		{&sequence{block: 0x12345678, count: 1, next: &sequence{block: 0XFFFFFFFF, count: 1}}, &sequence{block: 0x12345678, count: 1}, false},
-		{&sequence{block: 0x12345678, count: 1}, &sequence{block: 0x12345678, count: 1, next: &sequence{block: 0XFFFFFFFF, count: 1}}, false},
+		{&sequence{block: 0x12345678, count: 1, next: &sequence{block: 0xFFFFFFFF, count: 1}}, &sequence{block: 0x12345678, count: 1}, false},
+		{&sequence{block: 0x12345678, count: 1}, &sequence{block: 0x12345678, count: 1, next: &sequence{block: 0xFFFFFFFF, count: 1}}, false},
 	}
 
 	for n, i := range input {
@@ -484,7 +484,7 @@ func TestSerializeDeserialize(t *testing.T) {
 func getTestSequence() *sequence {
 	// Returns a custom sequence of 1024 * 32 bits
 	return &sequence{
-		block: 0XFFFFFFFF,
+		block: 0xFFFFFFFF,
 		count: 100,
 		next: &sequence{
 			block: 0xFFFFFFFE,
@@ -493,22 +493,22 @@ func getTestSequence() *sequence {
 				block: 0xFF000000,
 				count: 10,
 				next: &sequence{
-					block: 0XFFFFFFFF,
+					block: 0xFFFFFFFF,
 					count: 50,
 					next: &sequence{
-						block: 0XFFFFFFFC,
+						block: 0xFFFFFFFC,
 						count: 1,
 						next: &sequence{
 							block: 0xFF800000,
 							count: 1,
 							next: &sequence{
-								block: 0XFFFFFFFF,
+								block: 0xFFFFFFFF,
 								count: 87,
 								next: &sequence{
 									block: 0x0,
 									count: 150,
 									next: &sequence{
-										block: 0XFFFFFFFF,
+										block: 0xFFFFFFFF,
 										count: 200,
 										next: &sequence{
 											block: 0x0000FFFF,
@@ -517,7 +517,7 @@ func getTestSequence() *sequence {
 												block: 0x0,
 												count: 399,
 												next: &sequence{
-													block: 0XFFFFFFFF,
+													block: 0xFFFFFFFF,
 													count: 23,
 													next: &sequence{
 														block: 0x1,
@@ -847,7 +847,7 @@ func TestSetAnyInRange(t *testing.T) {
 
 func TestMethods(t *testing.T) {
 	numBits := uint64(256 * blockLen)
-	hnd, err := NewHandle("path/to/data", nil, "sequence1", uint64(numBits))
+	hnd, err := NewHandle("path/to/data", nil, "sequence1", numBits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -937,7 +937,7 @@ func TestAllocateRandomDeallocate(t *testing.T) {
 
 	numBlocks := uint32(8)
 	numBits := int(numBlocks * blockLen)
-	hnd, err := NewHandle("bitseq-test/data/", ds, "test1", uint64(numBits))
+	hnd, err := NewHandle(filepath.Join("bitseq", "test", "data"), ds, "test1", uint64(numBits))
 	if err != nil {
 		t.Fatal(err)
 	}

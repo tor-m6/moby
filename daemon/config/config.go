@@ -7,18 +7,13 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"io/ioutil"
 	"path/filepath"
 	"strings"
 	"sync"
 
-	"github.com/docker/docker/mystrings"
-	"golang.org/x/text/encoding"
-	"golang.org/x/text/encoding/unicode"
-	"golang.org/x/text/transform"
-
 	"github.com/containerd/containerd/runtime/v2/shim"
 	"github.com/docker/docker/opts"
+	"github.com/docker/docker/pkg/authorization"
 	"github.com/docker/docker/registry"
 	"github.com/imdario/mergo"
 	"github.com/pkg/errors"
@@ -76,7 +71,7 @@ var builtinRuntimes = map[string]bool{
 // flatOptions contains configuration keys
 // that MUST NOT be parsed as deep structures.
 // Use this to differentiate these options
-// with others like the ones in TLSOptions.
+// with others like the ones in CommonTLSOptions.
 var flatOptions = map[string]bool{
 	"cluster-store-opts": true,
 	"log-opts":           true,
@@ -127,14 +122,12 @@ type NetworkConfig struct {
 	DefaultAddressPools opts.PoolsOpt `json:"default-address-pools,omitempty"`
 	// NetworkControlPlaneMTU allows to specify the control plane MTU, this will allow to optimize the network use in some components
 	NetworkControlPlaneMTU int `json:"network-control-plane-mtu,omitempty"`
-	// Default options for newly created networks
-	DefaultNetworkOpts map[string]map[string]string `json:"default-network-opts,omitempty"`
 }
 
-// TLSOptions defines TLS configuration for the daemon server.
+// CommonTLSOptions defines TLS configuration for the daemon server.
 // It includes json tags to deserialize configuration from a file
 // using the same names that the flags in the command line use.
-type TLSOptions struct {
+type CommonTLSOptions struct {
 	CAFile   string `json:"tlscacert,omitempty"`
 	CertFile string `json:"tlscert,omitempty"`
 	KeyFile  string `json:"tlskey,omitempty"`
@@ -153,25 +146,33 @@ type DNSConfig struct {
 // It includes json tags to deserialize configuration from a file
 // using the same names that the flags in the command line use.
 type CommonConfig struct {
-	AuthorizationPlugins  []string            `json:"authorization-plugins,omitempty"` // AuthorizationPlugins holds list of authorization plugins
-	AutoRestart           bool                `json:"-"`
-	Context               map[string][]string `json:"-"`
-	DisableBridge         bool                `json:"-"`
-	ExecOptions           []string            `json:"exec-opts,omitempty"`
-	GraphDriver           string              `json:"storage-driver,omitempty"`
-	GraphOptions          []string            `json:"storage-opts,omitempty"`
-	Labels                []string            `json:"labels,omitempty"`
-	Mtu                   int                 `json:"mtu,omitempty"`
-	NetworkDiagnosticPort int                 `json:"network-diagnostic-port,omitempty"`
-	Pidfile               string              `json:"pidfile,omitempty"`
-	RawLogs               bool                `json:"raw-logs,omitempty"`
-	Root                  string              `json:"data-root,omitempty"`
-	ExecRoot              string              `json:"exec-root,omitempty"`
-	SocketGroup           string              `json:"group,omitempty"`
-	CorsHeaders           string              `json:"api-cors-header,omitempty"`
+	AuthzMiddleware       *authorization.Middleware `json:"-"`
+	AuthorizationPlugins  []string                  `json:"authorization-plugins,omitempty"` // AuthorizationPlugins holds list of authorization plugins
+	AutoRestart           bool                      `json:"-"`
+	Context               map[string][]string       `json:"-"`
+	DisableBridge         bool                      `json:"-"`
+	ExecOptions           []string                  `json:"exec-opts,omitempty"`
+	GraphDriver           string                    `json:"storage-driver,omitempty"`
+	GraphOptions          []string                  `json:"storage-opts,omitempty"`
+	Labels                []string                  `json:"labels,omitempty"`
+	Mtu                   int                       `json:"mtu,omitempty"`
+	NetworkDiagnosticPort int                       `json:"network-diagnostic-port,omitempty"`
+	Pidfile               string                    `json:"pidfile,omitempty"`
+	RawLogs               bool                      `json:"raw-logs,omitempty"`
+	RootDeprecated        string                    `json:"graph,omitempty"` // Deprecated: use Root instead. TODO(thaJeztah): remove in next release.
+	Root                  string                    `json:"data-root,omitempty"`
+	ExecRoot              string                    `json:"exec-root,omitempty"`
+	SocketGroup           string                    `json:"group,omitempty"`
+	CorsHeaders           string                    `json:"api-cors-header,omitempty"`
 
 	// Proxies holds the proxies that are configured for the daemon.
 	Proxies `json:"proxies"`
+
+	// TrustKeyPath is used to generate the daemon ID and for signing schema 1 manifests
+	// when pushing to a registry which does not support schema 2. This field is marked as
+	// deprecated because schema 1 manifests are deprecated in favor of schema 2 and the
+	// daemon ID will use a dedicated identifier not shared with exported signatures.
+	TrustKeyPath string `json:"deprecated-key-path,omitempty"`
 
 	// LiveRestoreEnabled determines whether we should keep containers
 	// alive upon daemon shutdown/start
@@ -201,7 +202,7 @@ type CommonConfig struct {
 
 	// Embedded structs that allow config
 	// deserialization without the full struct.
-	TLSOptions
+	CommonTLSOptions
 
 	// SwarmDefaultAdvertiseAddr is the default host/IP or network interface
 	// to use if a wildcard address is specified in the ListenAddr value
@@ -291,7 +292,6 @@ func New() (*Config, error) {
 			Mtu:                    DefaultNetworkMtu,
 			NetworkConfig: NetworkConfig{
 				NetworkControlPlaneMTU: DefaultNetworkMtu,
-				DefaultNetworkOpts:     make(map[string]map[string]string),
 			},
 			ContainerdNamespace:       DefaultContainersNamespace,
 			ContainerdPluginNamespace: DefaultPluginNamespace,
@@ -313,13 +313,13 @@ func New() (*Config, error) {
 func GetConflictFreeLabels(labels []string) ([]string, error) {
 	labelMap := map[string]string{}
 	for _, label := range labels {
-		key, val, ok := mystrings.Cut(label, "=")
-		if ok {
+		stringSlice := strings.SplitN(label, "=", 2)
+		if len(stringSlice) > 1 {
 			// If there is a conflict we will return an error
-			if v, ok := labelMap[key]; ok && v != val {
-				return nil, errors.Errorf("conflict labels for %s=%s and %s=%s", key, val, key, v)
+			if v, ok := labelMap[stringSlice[0]]; ok && v != stringSlice[1] {
+				return nil, errors.Errorf("conflict labels for %s=%s and %s=%s", stringSlice[0], stringSlice[1], stringSlice[0], v)
 			}
-			labelMap[key] = val
+			labelMap[stringSlice[0]] = stringSlice[1]
 		}
 	}
 
@@ -412,46 +412,17 @@ func MergeDaemonConfigurations(flagsConfig *Config, flags *pflag.FlagSet, config
 // It compares that configuration with the one provided by the flags,
 // and returns an error if there are conflicts.
 func getConflictFreeConfiguration(configFile string, flags *pflag.FlagSet) (*Config, error) {
-	b, err := ioutil.ReadFile(configFile)
+	b, err := os.ReadFile(configFile)
 	if err != nil {
 		return nil, err
 	}
 
-	// Decode the contents of the JSON file using a [byte order mark] if present, instead of assuming UTF-8 without BOM.
-	// The BOM, if present, will be used to determine the encoding. If no BOM is present, we will assume the default
-	// and preferred encoding for JSON as defined by [RFC 8259], UTF-8 without BOM.
-	//
-	// While JSON is normatively UTF-8 with no BOM, there are a couple of reasons to decode here:
-	//   * UTF-8 with BOM is something that new implementations should avoid producing; however, [RFC 8259 Section 8.1]
-	//     allows implementations to ignore the UTF-8 BOM when present for interoperability. Older versions of Notepad,
-	//     the only text editor available out of the box on Windows Server, writes UTF-8 with a BOM by default.
-	//   * The default encoding for [Windows PowerShell] is UTF-16 LE with BOM. While encodings in PowerShell can be a
-	//     bit idiosyncratic, BOMs are still generally written. There is no support for selecting UTF-8 without a BOM as
-	//     the encoding in Windows PowerShell, though some Cmdlets only write UTF-8 with no BOM. PowerShell Core
-	//     introduces `utf8NoBOM` and makes it the default, but PowerShell Core is unlikely to be the implementation for
-	//     a majority of Windows Server + PowerShell users.
-	//   * While [RFC 8259 Section 8.1] asserts that software that is not part of a closed ecosystem or that crosses a
-	//     network boundary should only support UTF-8, and should never write a BOM, it does acknowledge older versions
-	//     of the standard, such as [RFC 7159 Section 8.1]. In the interest of pragmatism and easing pain for Windows
-	//     users, we consider Windows tools such as Windows PowerShell and Notepad part of our ecosystem, and support
-	//     the two most common encodings: UTF-16 LE with BOM, and UTF-8 with BOM, in addition to the standard UTF-8
-	//     without BOM.
-	//
-	// [byte order mark]: https://www.unicode.org/faq/utf_bom.html#BOM
-	// [RFC 8259]: https://www.rfc-editor.org/rfc/rfc8259
-	// [RFC 8259 Section 8.1]: https://www.rfc-editor.org/rfc/rfc8259#section-8.1
-	// [RFC 7159 Section 8.1]: https://www.rfc-editor.org/rfc/rfc7159#section-8.1
-	// [Windows PowerShell]: https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_character_encoding?view=powershell-5.1
-	b, n, err := transform.Bytes(transform.Chain(unicode.BOMOverride(transform.Nop), encoding.UTF8Validator), b)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to decode configuration JSON at offset %d", n)
-	}
-	// Trim whitespace so that an empty config can be detected for an early return.
-	b = bytes.TrimSpace(b)
-
 	var config Config
+
+	b = bytes.TrimSpace(b)
 	if len(b) == 0 {
-		return &config, nil // early return on empty config
+		// empty config file
+		return &config, nil
 	}
 
 	if flags != nil {
@@ -593,6 +564,11 @@ func findConfigurationConflicts(config map[string]interface{}, flags *pflag.Flag
 // such as config.DNS, config.Labels, config.DNSSearch,
 // as well as config.MaxConcurrentDownloads, config.MaxConcurrentUploads and config.MaxDownloadAttempts.
 func Validate(config *Config) error {
+	//nolint:staticcheck // TODO(thaJeztah): remove in next release.
+	if config.RootDeprecated != "" {
+		return errors.New(`the "graph" config file option is deprecated; use "data-root" instead`)
+	}
+
 	// validate log-level
 	if config.LogLevel != "" {
 		if _, err := logrus.ParseLevel(config.LogLevel); err != nil {

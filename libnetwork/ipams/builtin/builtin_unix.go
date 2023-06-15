@@ -1,14 +1,20 @@
-// +build linux freebsd solaris darwin
+//go:build linux || freebsd || darwin || inno
+// +build linux freebsd darwin inno
 
 package builtin
 
 import (
 	"errors"
 
-	"github.com/docker/libnetwork/datastore"
-	"github.com/docker/libnetwork/ipam"
-	"github.com/docker/libnetwork/ipamapi"
-	"github.com/docker/libnetwork/ipamutils"
+	"github.com/docker/docker/libnetwork/datastore"
+	"github.com/docker/docker/libnetwork/ipam"
+	"github.com/docker/docker/libnetwork/ipamapi"
+	"github.com/docker/docker/libnetwork/ipamutils"
+)
+
+var (
+	// defaultAddressPool Stores user configured subnet list
+	defaultAddressPool []*ipamutils.NetworkToSplit
 )
 
 // Init registers the built-in ipam service with libnetwork
@@ -30,7 +36,10 @@ func Init(ic ipamapi.Callback, l, g interface{}) error {
 		}
 	}
 
-	ipamutils.InitNetworks()
+	err := ipamutils.ConfigLocalScopeDefaultNetworks(GetDefaultIPAddressPool())
+	if err != nil {
+		return err
+	}
 
 	a, err := ipam.NewAllocator(localDs, globalDs)
 	if err != nil {
@@ -40,4 +49,14 @@ func Init(ic ipamapi.Callback, l, g interface{}) error {
 	cps := &ipamapi.Capability{RequiresRequestReplay: true}
 
 	return ic.RegisterIpamDriverWithCapabilities(ipamapi.DefaultIPAM, a, cps)
+}
+
+// SetDefaultIPAddressPool stores default address pool.
+func SetDefaultIPAddressPool(addressPool []*ipamutils.NetworkToSplit) {
+	defaultAddressPool = addressPool
+}
+
+// GetDefaultIPAddressPool returns default address pool.
+func GetDefaultIPAddressPool() []*ipamutils.NetworkToSplit {
+	return defaultAddressPool
 }

@@ -7,13 +7,13 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/Sirupsen/logrus"
-	"github.com/docker/libnetwork/datastore"
-	"github.com/docker/libnetwork/discoverapi"
-	"github.com/docker/libnetwork/driverapi"
-	"github.com/docker/libnetwork/idm"
-	"github.com/docker/libnetwork/netlabel"
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/datastore"
+	"github.com/docker/docker/libnetwork/discoverapi"
+	"github.com/docker/docker/libnetwork/driverapi"
+	"github.com/docker/docker/libnetwork/idm"
+	"github.com/docker/docker/libnetwork/netlabel"
+	"github.com/docker/docker/libnetwork/types"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -27,7 +27,6 @@ type networkTable map[string]*network
 type driver struct {
 	config   map[string]interface{}
 	networks networkTable
-	store    datastore.DataStore
 	vxlanIdm *idm.Idm
 	sync.Mutex
 }
@@ -118,15 +117,19 @@ func (d *driver) NetworkAllocate(id string, option map[string]string, ipV4Data, 
 		n.subnets = append(n.subnets, s)
 	}
 
-	val := fmt.Sprintf("%d", n.subnets[0].vni)
+	val := strconv.FormatUint(uint64(n.subnets[0].vni), 10)
 	for _, s := range n.subnets[1:] {
-		val = val + fmt.Sprintf(",%d", s.vni)
+		val = val + "," + strconv.FormatUint(uint64(s.vni), 10)
 	}
 	opts[netlabel.OverlayVxlanIDList] = val
 
 	d.Lock()
+	defer d.Unlock()
+	if _, ok := d.networks[id]; ok {
+		n.releaseVxlanID()
+		return nil, fmt.Errorf("network %s already exists", id)
+	}
 	d.networks[id] = n
-	d.Unlock()
 
 	return opts, nil
 }
@@ -137,8 +140,8 @@ func (d *driver) NetworkFree(id string) error {
 	}
 
 	d.Lock()
+	defer d.Unlock()
 	n, ok := d.networks[id]
-	d.Unlock()
 
 	if !ok {
 		return fmt.Errorf("overlay network with id %s not found", id)
@@ -147,9 +150,7 @@ func (d *driver) NetworkFree(id string) error {
 	// Release all vxlan IDs in one shot.
 	n.releaseVxlanID()
 
-	d.Lock()
 	delete(d.networks, id)
-	d.Unlock()
 
 	return nil
 }

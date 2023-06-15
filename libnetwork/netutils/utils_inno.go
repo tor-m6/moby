@@ -3,7 +3,8 @@ package netutils
 import (
 	"net"
 
-	"github.com/docker/libnetwork/types"
+	"github.com/vishvananda/netlink"
+	"github.com/docker/docker/libnetwork/types"
 )
 
 // ElectInterfaceAddresses looks for an interface on the OS with the specified name
@@ -13,11 +14,15 @@ import (
 // list the first IPv4 address which does not conflict with other
 // interfaces on the system.
 func ElectInterfaceAddresses(name string) ([]*net.IPNet, []*net.IPNet, error) {
-	return nil, nil, types.NotImplementedErrorf("not supported on freebsd")
+	return nil, nil, types.NotImplementedErrorf("not supported on genode")
 }
 
 // FindAvailableNetwork returns a network from the passed list which does not
 // overlap with existing interfaces in the system
 func FindAvailableNetwork(list []*net.IPNet) (*net.IPNet, error) {
-	return nil, types.NotImplementedErrorf("not supported on freebsd")
+	return nil, types.NotImplementedErrorf("not supported on genode")
+}
+
+func GenerateIfaceName(nlh *netlink.Handle, prefix string, len int) (string, error) {
+	return "", types.NotImplementedErrorf("not supported on genode")
 }

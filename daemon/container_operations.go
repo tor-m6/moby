@@ -107,18 +107,18 @@ func (daemon *Daemon) buildSandboxOptions(container *container.Container) ([]lib
 		if _, err := opts.ValidateExtraHost(extraHost); err != nil {
 			return nil, err
 		}
-		host, ip, _ := strings.Cut(extraHost, ":")
+		parts := strings.SplitN(extraHost, ":", 2)
 		// If the IP Address is a string called "host-gateway", replace this
 		// value with the IP address stored in the daemon level HostGatewayIP
 		// config variable
-		if ip == opts.HostGatewayName {
+		if parts[1] == opts.HostGatewayName {
 			gateway := daemon.configStore.HostGatewayIP.String()
 			if gateway == "" {
 				return nil, fmt.Errorf("unable to derive the IP value for host-gateway")
 			}
-			ip = gateway
+			parts[1] = gateway
 		}
-		sboxOptions = append(sboxOptions, libnetwork.OptionExtraHost(host, ip))
+		sboxOptions = append(sboxOptions, libnetwork.OptionExtraHost(parts[0], parts[1]))
 	}
 
 	if container.HostConfig.PortBindings != nil {
@@ -291,7 +291,7 @@ func (daemon *Daemon) updateNetworkSettings(container *container.Container, n li
 	return nil
 }
 
-func (daemon *Daemon) updateEndpointNetworkSettings(container *container.Container, n libnetwork.Network, ep *libnetwork.Endpoint) error {
+func (daemon *Daemon) updateEndpointNetworkSettings(container *container.Container, n libnetwork.Network, ep libnetwork.Endpoint) error {
 	if err := buildEndpointInfo(container.NetworkSettings, n, ep); err != nil {
 		return err
 	}
@@ -391,7 +391,7 @@ func (daemon *Daemon) findAndAttachNetwork(container *container.Container, idOrN
 
 	var (
 		config     *networktypes.NetworkingConfig
-		retryCount int
+		// retryCount int
 	)
 
 	if n == nil && daemon.attachableNetworkLock != nil {
@@ -402,42 +402,41 @@ func (daemon *Daemon) findAndAttachNetwork(container *container.Container, idOrN
 	for {
 		// In all other cases, attempt to attach to the network to
 		// trigger attachment in the swarm cluster manager.
-		if daemon.clusterProvider != nil {
-			var err error
-			config, err = daemon.clusterProvider.AttachNetwork(id, container.ID, addresses)
-			if err != nil {
-				return nil, nil, err
-			}
-		}
+		// if daemon.clusterProvider != nil {
+		// 	var err error
+		// 	config, err = daemon.clusterProvider.AttachNetwork(id, container.ID, addresses)
+		// 	if err != nil {
+		// 		return nil, nil, err
+		// 	}
+		// }
 
-		n, err = daemon.FindNetwork(id)
-		if err != nil {
-			if daemon.clusterProvider != nil {
-				if err := daemon.clusterProvider.DetachNetwork(id, container.ID); err != nil {
-					logrus.Warnf("Could not rollback attachment for container %s to network %s: %v", container.ID, idOrName, err)
-				}
-			}
+	// 	n, err = daemon.FindNetwork(id)
+	// 	if err != nil {
+	// 		if daemon.clusterProvider != nil {
+	// 			if err := daemon.clusterProvider.DetachNetwork(id, container.ID); err != nil {
+	// 				logrus.Warnf("Could not rollback attachment for container %s to network %s: %v", container.ID, idOrName, err)
+	// 			}
+	// 		}
 
-			// Retry network attach again if we failed to
-			// find the network after successful
-			// attachment because the only reason that
-			// would happen is if some other container
-			// attached to the swarm scope network went down
-			// and removed the network while we were in
-			// the process of attaching.
-			if config != nil {
-				if _, ok := err.(libnetwork.ErrNoSuchNetwork); ok {
-					if retryCount >= 5 {
-						return nil, nil, fmt.Errorf("could not find network %s after successful attachment", idOrName)
-					}
-					retryCount++
-					continue
-				}
-			}
+	// 		// Retry network attach again if we failed to
+	// 		// find the network after successful
+	// 		// attachment because the only reason that
+	// 		// would happen is if some other container
+	// 		// attached to the swarm scope network went down
+	// 		// and removed the network while we were in
+	// 		// the process of attaching.
+	// 		if config != nil {
+	// 			if _, ok := err.(libnetwork.ErrNoSuchNetwork); ok {
+	// 				if retryCount >= 5 {
+	// 					return nil, nil, fmt.Errorf("could not find network %s after successful attachment", idOrName)
+	// 				}
+	// 				retryCount++
+	// 				continue
+	// 			}
+	// 		}
 
-			return nil, nil, err
-		}
-
+	// 		return nil, nil, err
+	// 	}
 		break
 	}
 
@@ -602,9 +601,9 @@ func (daemon *Daemon) allocateNetwork(container *container.Container) (retErr er
 	return nil
 }
 
-func (daemon *Daemon) getNetworkSandbox(container *container.Container) *libnetwork.Sandbox {
-	var sb *libnetwork.Sandbox
-	daemon.netController.WalkSandboxes(func(s *libnetwork.Sandbox) bool {
+func (daemon *Daemon) getNetworkSandbox(container *container.Container) libnetwork.Sandbox {
+	var sb libnetwork.Sandbox
+	daemon.netController.WalkSandboxes(func(s libnetwork.Sandbox) bool {
 		if s.ContainerID() == container.ID {
 			sb = s
 			return true
@@ -834,7 +833,7 @@ func (daemon *Daemon) connectToNetwork(container *container.Container, idOrName 
 	return nil
 }
 
-func updateJoinInfo(networkSettings *network.Settings, n libnetwork.Network, ep *libnetwork.Endpoint) error {
+func updateJoinInfo(networkSettings *network.Settings, n libnetwork.Network, ep libnetwork.Endpoint) error {
 	if ep == nil {
 		return errors.New("invalid enppoint whhile building portmap info")
 	}
@@ -881,11 +880,11 @@ func (daemon *Daemon) ForceEndpointDelete(name string, networkName string) error
 
 func (daemon *Daemon) disconnectFromNetwork(container *container.Container, n libnetwork.Network, force bool) error {
 	var (
-		ep   *libnetwork.Endpoint
-		sbox *libnetwork.Sandbox
+		ep   libnetwork.Endpoint
+		sbox libnetwork.Sandbox
 	)
 
-	s := func(current *libnetwork.Endpoint) bool {
+	s := func(current libnetwork.Endpoint) bool {
 		epInfo := current.Info()
 		if epInfo == nil {
 			return false
@@ -1164,7 +1163,7 @@ func getNetworkID(name string, endpointSettings *networktypes.EndpointSettings) 
 }
 
 // updateSandboxNetworkSettings updates the sandbox ID and Key.
-func updateSandboxNetworkSettings(c *container.Container, sb *libnetwork.Sandbox) error {
+func updateSandboxNetworkSettings(c *container.Container, sb libnetwork.Sandbox) error {
 	c.NetworkSettings.SandboxID = sb.ID()
 	c.NetworkSettings.SandboxKey = sb.Key()
 	return nil

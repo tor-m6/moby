@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
-	"github.com/docker/docker/mystrings"
 
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/pkg/stringid"
@@ -416,18 +415,20 @@ func (p *windowsParser) ParseVolumesFrom(spec string) (string, string, error) {
 		return "", "", fmt.Errorf("volumes-from specification cannot be an empty string")
 	}
 
-	id, mode, _ := mystrings.Cut(spec, ":")
-	if mode == "" {
-		return id, "rw", nil
-	}
+	specParts := strings.SplitN(spec, ":", 2)
+	id := specParts[0]
+	mode := "rw"
 
-	if !windowsValidMountMode(mode) {
-		return "", "", errInvalidMode(mode)
-	}
+	if len(specParts) == 2 {
+		mode = specParts[1]
+		if !windowsValidMountMode(mode) {
+			return "", "", errInvalidMode(mode)
+		}
 
-	// Do not allow copy modes on volumes-from
-	if _, isSet := getCopyMode(mode, p.DefaultCopyMode()); isSet {
-		return "", "", errInvalidMode(mode)
+		// Do not allow copy modes on volumes-from
+		if _, isSet := getCopyMode(mode, p.DefaultCopyMode()); isSet {
+			return "", "", errInvalidMode(mode)
+		}
 	}
 	return id, mode, nil
 }

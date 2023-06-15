@@ -1,3 +1,6 @@
+//go:build linux || inno
+// +build linux inno 
+
 package bridge
 
 import (

@@ -7,10 +7,8 @@ import (
 	"io"
 	"os"
 	"runtime"
-	"strings"
 	"time"
 
-	"github.com/docker/docker/myos"
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/platforms"
 	"github.com/docker/distribution"
@@ -439,6 +437,10 @@ func (p *puller) pullTag(ctx context.Context, ref reference.Named, platform *spe
 
 	switch v := manifest.(type) {
 	case *schema1.SignedManifest:
+		if p.config.RequireSchema2 {
+			return false, fmt.Errorf("invalid manifest: not schema2")
+		}
+
 		// give registries time to upgrade to schema2 and only warn if we know a registry has been upgraded long time ago
 		// TODO: condition to be removed
 		if reference.Domain(ref) == "docker.io" {
@@ -604,28 +606,11 @@ func (p *puller) pullSchema1(ctx context.Context, ref reference.Reference, unver
 	return imageID, manifestDigest, nil
 }
 
-func checkSupportedMediaType(mediaType string) error {
-	lowerMt := strings.ToLower(mediaType)
-	for _, mt := range supportedMediaTypes {
-		// The should either be an exact match, or have a valid prefix
-		// we append a "." when matching prefixes to exclude "false positives";
-		// for example, we don't want to match "application/vnd.oci.images_are_fun_yolo".
-		if lowerMt == mt || strings.HasPrefix(lowerMt, mt+".") {
-			return nil
-		}
-	}
-	return unsupportedMediaTypeError{MediaType: mediaType}
-}
-
 func (p *puller) pullSchema2Layers(ctx context.Context, target distribution.Descriptor, layers []distribution.Descriptor, platform *specs.Platform) (id digest.Digest, err error) {
 	if _, err := p.config.ImageStore.Get(ctx, target.Digest); err == nil {
 		// If the image already exists locally, no need to pull
 		// anything.
 		return target.Digest, nil
-	}
-
-	if err := checkSupportedMediaType(target.MediaType); err != nil {
-		return "", err
 	}
 
 	var descriptors []xfer.DownloadDescriptor
@@ -635,9 +620,6 @@ func (p *puller) pullSchema2Layers(ctx context.Context, target distribution.Desc
 	for _, d := range layers {
 		if err := d.Digest.Validate(); err != nil {
 			return "", errors.Wrapf(err, "could not validate layer digest %q", d.Digest)
-		}
-		if err := checkSupportedMediaType(d.MediaType); err != nil {
-			return "", err
 		}
 		layerDescriptor := &layerDescriptor{
 			digest:          d.Digest,
@@ -1079,7 +1061,7 @@ func fixManifestLayers(m *schema1.Manifest) error {
 }
 
 func createDownloadFile() (*os.File, error) {
-	return myos.CreateTemp("", "GetImageBlob")
+	return os.CreateTemp("", "GetImageBlob")
 }
 
 func toOCIPlatform(p manifestlist.PlatformSpec) *specs.Platform {

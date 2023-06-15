@@ -1,11 +1,13 @@
+//go:build linux
+// +build linux
+
 package ipvlan
 
 import (
 	"fmt"
 
-	"github.com/Sirupsen/logrus"
-	"github.com/docker/libnetwork/osl"
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/types"
+	"github.com/sirupsen/logrus"
 )
 
 func (d *driver) network(nid string) *network {
@@ -31,7 +33,7 @@ func (d *driver) deleteNetwork(nid string) {
 	d.Unlock()
 }
 
-// getNetworks Safely returns a slice of existng networks
+// getNetworks Safely returns a slice of existing networks
 func (d *driver) getNetworks() []*network {
 	d.Lock()
 	defer d.Unlock()
@@ -85,19 +87,6 @@ func validateID(nid, eid string) error {
 	}
 
 	return nil
-}
-
-func (n *network) sandbox() osl.Sandbox {
-	n.Lock()
-	defer n.Unlock()
-
-	return n.sbox
-}
-
-func (n *network) setSandbox(sbox osl.Sandbox) {
-	n.Lock()
-	n.sbox = sbox
-	n.Unlock()
 }
 
 func (d *driver) getNetwork(id string) (*network, error) {

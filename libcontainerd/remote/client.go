@@ -23,7 +23,7 @@ import (
 	"github.com/containerd/containerd/events"
 	"github.com/containerd/containerd/images"
 	v2runcoptions "github.com/containerd/containerd/runtime/v2/runc/options"
-	"github.com/containerd/typeurl/v2"
+	"github.com/containerd/typeurl"
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/libcontainerd/queue"
 	libcontainerdtypes "github.com/docker/docker/libcontainerd/types"
@@ -145,7 +145,7 @@ func (c *client) NewContainer(ctx context.Context, id string, ociSpec *specs.Spe
 // Start create and start a task for the specified containerd id
 func (c *container) Start(ctx context.Context, checkpointDir string, withStdin bool, attachStdio libcontainerdtypes.StdioCallback) (libcontainerdtypes.Task, error) {
 	var (
-		checkpoint     *types.Descriptor
+		cp             *types.Descriptor
 		t              containerd.Task
 		rio            cio.IO
 		stdinCloseSync = make(chan containerd.Process, 1)
@@ -154,16 +154,15 @@ func (c *container) Start(ctx context.Context, checkpointDir string, withStdin b
 	if checkpointDir != "" {
 		// write checkpoint to the content store
 		tar := archive.Diff(ctx, "", checkpointDir)
-		var err error
-		checkpoint, err = c.client.writeContent(ctx, images.MediaTypeContainerd1Checkpoint, checkpointDir, tar)
+		cp, err := c.client.writeContent(ctx, images.MediaTypeContainerd1Checkpoint, checkpointDir, tar)
 		// remove the checkpoint when we're done
 		defer func() {
-			if checkpoint != nil {
-				err := c.client.client.ContentStore().Delete(ctx, checkpoint.Digest)
+			if cp != nil {
+				err := c.client.client.ContentStore().Delete(ctx, cp.Digest)
 				if err != nil {
 					c.client.logger.WithError(err).WithFields(logrus.Fields{
 						"ref":    checkpointDir,
-						"digest": checkpoint.Digest,
+						"digest": cp.Digest,
 					}).Warnf("failed to delete temporary checkpoint entry")
 				}
 			}
@@ -193,7 +192,7 @@ func (c *container) Start(ctx context.Context, checkpointDir string, withStdin b
 
 	taskOpts := []containerd.NewTaskOpts{
 		func(_ context.Context, _ *containerd.Client, info *containerd.TaskInfo) error {
-			info.Checkpoint = checkpoint
+			info.Checkpoint = cp
 			return nil
 		},
 	}
@@ -214,9 +213,9 @@ func (c *container) Start(ctx context.Context, checkpointDir string, withStdin b
 
 	t, err = c.c8dCtr.NewTask(ctx,
 		func(id string) (cio.IO, error) {
-			fifos := newFIFOSet(bundle, id, withStdin, spec.Process.Terminal)
+			fifos := newFIFOSet(bundle, libcontainerdtypes.InitProcessName, withStdin, spec.Process.Terminal)
 
-			rio, err = c.createIO(fifos, stdinCloseSync, attachStdio)
+			rio, err = c.createIO(fifos, libcontainerdtypes.InitProcessName, stdinCloseSync, attachStdio)
 			return rio, err
 		},
 		taskOpts...,
@@ -279,7 +278,7 @@ func (t *task) Exec(ctx context.Context, processID string, spec *specs.Process, 
 	}()
 
 	p, err = t.Task.Exec(ctx, processID, spec, func(id string) (cio.IO, error) {
-		rio, err = t.ctr.createIO(fifos, stdinCloseSync, attachStdio)
+		rio, err = t.ctr.createIO(fifos, processID, stdinCloseSync, attachStdio)
 		return rio, err
 	})
 	if err != nil {
@@ -490,7 +489,7 @@ func (c *container) Task(ctx context.Context) (libcontainerdtypes.Task, error) {
 
 // createIO creates the io to be used by a process
 // This needs to get a pointer to interface as upon closure the process may not have yet been registered
-func (c *container) createIO(fifos *cio.FIFOSet, stdinCloseSync chan containerd.Process, attachStdio libcontainerdtypes.StdioCallback) (cio.IO, error) {
+func (c *container) createIO(fifos *cio.FIFOSet, processID string, stdinCloseSync chan containerd.Process, attachStdio libcontainerdtypes.StdioCallback) (cio.IO, error) {
 	var (
 		io  *cio.DirectIO
 		err error

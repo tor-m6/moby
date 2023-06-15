@@ -4,13 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path"
 	"path/filepath"
 	"time"
 
-	"github.com/docker/docker/myos"
 	"github.com/docker/distribution"
 	"github.com/docker/distribution/reference"
 	"github.com/docker/docker/image"
@@ -96,7 +94,8 @@ func (l *tarexporter) parseNames(names []string) (desc map[image.ID]*imageDescri
 		if !ok {
 			// Check if digest ID reference
 			if digested, ok := ref.(reference.Digested); ok {
-				if err := addAssoc(image.ID(digested.Digest()), nil); err != nil {
+				id := image.IDFromDigest(digested.Digest())
+				if err := addAssoc(id, nil); err != nil {
 					return nil, err
 				}
 				continue
@@ -117,7 +116,7 @@ func (l *tarexporter) parseNames(names []string) (desc map[image.ID]*imageDescri
 		if reference.IsNameOnly(namedRef) {
 			assocs := l.rs.ReferencesByName(namedRef)
 			for _, assoc := range assocs {
-				if err := addAssoc(image.ID(assoc.ID), assoc.Ref); err != nil {
+				if err := addAssoc(image.IDFromDigest(assoc.ID), assoc.Ref); err != nil {
 					return nil, err
 				}
 			}
@@ -136,7 +135,7 @@ func (l *tarexporter) parseNames(names []string) (desc map[image.ID]*imageDescri
 		if err != nil {
 			return nil, err
 		}
-		if err := addAssoc(image.ID(id), namedRef); err != nil {
+		if err := addAssoc(image.IDFromDigest(id), namedRef); err != nil {
 			return nil, err
 		}
 	}
@@ -180,7 +179,7 @@ func (s *saveSession) save(outStream io.Writer) error {
 	s.diffIDPaths = make(map[layer.DiffID]string)
 
 	// get image json
-	tempDir, err := myos.MkdirTemp("", "docker-export-")
+	tempDir, err := os.MkdirTemp("", "docker-export-")
 	if err != nil {
 		return err
 	}
@@ -326,7 +325,7 @@ func (s *saveSession) saveImage(id image.ID) (map[layer.DiffID]distribution.Desc
 	}
 
 	configFile := filepath.Join(s.outDir, id.Digest().Encoded()+".json")
-	if err := ioutil.WriteFile(configFile, img.RawJSON(), 0o644); err != nil {
+	if err := os.WriteFile(configFile, img.RawJSON(), 0o644); err != nil {
 		return nil, err
 	}
 	if err := system.Chtimes(configFile, img.Created, img.Created); err != nil {
@@ -348,7 +347,7 @@ func (s *saveSession) saveLayer(id layer.ChainID, legacyImg image.V1Image, creat
 	}
 
 	// todo: why is this version file here?
-	if err := ioutil.WriteFile(filepath.Join(outDir, legacyVersionFileName), []byte("1.0"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(outDir, legacyVersionFileName), []byte("1.0"), 0644); err != nil {
 		return distribution.Descriptor{}, err
 	}
 
@@ -357,7 +356,7 @@ func (s *saveSession) saveLayer(id layer.ChainID, legacyImg image.V1Image, creat
 		return distribution.Descriptor{}, err
 	}
 
-	if err := ioutil.WriteFile(filepath.Join(outDir, legacyConfigFileName), imageConfig, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(outDir, legacyConfigFileName), imageConfig, 0644); err != nil {
 		return distribution.Descriptor{}, err
 	}
 

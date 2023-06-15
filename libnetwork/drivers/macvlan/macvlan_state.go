@@ -1,11 +1,13 @@
+//go:build linux
+// +build linux
+
 package macvlan
 
 import (
 	"fmt"
 
-	"github.com/Sirupsen/logrus"
-	"github.com/docker/libnetwork/osl"
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/types"
+	"github.com/sirupsen/logrus"
 )
 
 func (d *driver) network(nid string) *network {
@@ -84,19 +86,6 @@ func validateID(nid, eid string) error {
 		return fmt.Errorf("invalid endpoint id")
 	}
 	return nil
-}
-
-func (n *network) sandbox() osl.Sandbox {
-	n.Lock()
-	defer n.Unlock()
-
-	return n.sbox
-}
-
-func (n *network) setSandbox(sbox osl.Sandbox) {
-	n.Lock()
-	n.sbox = sbox
-	n.Unlock()
 }
 
 func (d *driver) getNetwork(id string) (*network, error) {

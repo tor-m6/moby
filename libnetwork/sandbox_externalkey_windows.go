@@ -1,3 +1,4 @@
+//go:build windows
 // +build windows
 
 package libnetwork
@@ -6,7 +7,7 @@ import (
 	"io"
 	"net"
 
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/types"
 )
 
 // processSetKeyReexec is a private function that must be called only on an reexec path

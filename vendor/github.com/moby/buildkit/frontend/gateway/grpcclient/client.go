@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"os"
 	"strings"
@@ -496,7 +495,7 @@ func (c *grpcClient) CurrentFrontend() (*llb.State, error) {
 	if _, err := os.Stat(fp); err != nil {
 		return nil, nil
 	}
-	dt, err := ioutil.ReadFile(fp)
+	dt, err := os.ReadFile(fp)
 	if err != nil {
 		return nil, err
 	}

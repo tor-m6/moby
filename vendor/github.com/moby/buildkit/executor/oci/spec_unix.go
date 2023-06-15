@@ -1,5 +1,5 @@
-//go:build !windows
-// +build !windows
+//go:build !windows && !inno
+// +build !windows !inno
 
 package oci
 
@@ -10,15 +10,13 @@ import (
 
 	"github.com/containerd/containerd/containers"
 	"github.com/containerd/containerd/oci"
-	// cdseccomp "github.com/containerd/containerd/pkg/seccomp"
+	cdseccomp "github.com/containerd/containerd/pkg/seccomp"
 	"github.com/docker/docker/pkg/idtools"
-	// "github.com/docker/docker/profiles/seccomp"
+	"github.com/docker/docker/profiles/seccomp"
 	"github.com/moby/buildkit/solver/pb"
 	"github.com/moby/buildkit/util/entitlements/security"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
-	selinux "github.com/opencontainers/selinux/go-selinux"
 	"github.com/opencontainers/selinux/go-selinux/label"
-	"github.com/pkg/errors"
 )
 
 func generateMountOpts(resolvConf, hostsFile string) ([]oci.SpecOpts, error) {
@@ -32,10 +30,7 @@ func generateMountOpts(resolvConf, hostsFile string) ([]oci.SpecOpts, error) {
 }
 
 // generateSecurityOpts may affect mounts, so must be called after generateMountOpts
-func generateSecurityOpts(mode pb.SecurityMode, apparmorProfile string, selinuxB bool) (opts []oci.SpecOpts, _ error) {
-	if selinuxB && !selinux.GetEnabled() {
-		return nil, errors.New("selinux is not available")
-	}
+func generateSecurityOpts(mode pb.SecurityMode, apparmorProfile string) (opts []oci.SpecOpts, _ error) {
 	switch mode {
 	case pb.SecurityMode_INSECURE:
 		return []oci.SpecOpts{
@@ -44,24 +39,20 @@ func generateSecurityOpts(mode pb.SecurityMode, apparmorProfile string, selinuxB
 			oci.WithWriteableSysfs,
 			func(_ context.Context, _ oci.Client, _ *containers.Container, s *oci.Spec) error {
 				var err error
-				if selinuxB {
-					s.Process.SelinuxLabel, s.Linux.MountLabel, err = label.InitLabels([]string{"disable"})
-				}
+				s.Process.SelinuxLabel, s.Linux.MountLabel, err = label.InitLabels([]string{"disable"})
 				return err
 			},
 		}, nil
 	case pb.SecurityMode_SANDBOX:
-		// if cdseccomp.IsEnabled() {
-		// 	opts = append(opts, withDefaultProfile())
-		// }
+		if cdseccomp.IsEnabled() {
+			opts = append(opts, withDefaultProfile())
+		}
 		if apparmorProfile != "" {
 			opts = append(opts, oci.WithApparmorProfile(apparmorProfile))
 		}
 		opts = append(opts, func(_ context.Context, _ oci.Client, _ *containers.Container, s *oci.Spec) error {
 			var err error
-			if selinuxB {
-				s.Process.SelinuxLabel, s.Linux.MountLabel, err = label.InitLabels(nil)
-			}
+			s.Process.SelinuxLabel, s.Linux.MountLabel, err = label.InitLabels(nil)
 			return err
 		})
 		return opts, nil
@@ -115,10 +106,10 @@ func generateRlimitOpts(ulimits []*pb.Ulimit) ([]oci.SpecOpts, error) {
 
 // withDefaultProfile sets the default seccomp profile to the spec.
 // Note: must follow the setting of process capabilities
-// func withDefaultProfile() oci.SpecOpts {
-// 	return func(_ context.Context, _ oci.Client, _ *containers.Container, s *specs.Spec) error {
-// 		var err error
-// 		s.Linux.Seccomp, err = seccomp.GetDefaultProfile(s)
-// 		return err
-// 	}
-// }
+func withDefaultProfile() oci.SpecOpts {
+	return func(_ context.Context, _ oci.Client, _ *containers.Container, s *specs.Spec) error {
+		var err error
+		s.Linux.Seccomp, err = seccomp.GetDefaultProfile(s)
+		return err
+	}
+}

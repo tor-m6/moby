@@ -2,18 +2,18 @@ package supervisor // import "github.com/docker/docker/libcontainerd/supervisor"
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/services/server/config"
 	"github.com/containerd/containerd/sys"
-	"github.com/docker/docker/pkg/pidfile"
-	"github.com/docker/docker/pkg/process"
 	"github.com/docker/docker/pkg/system"
 	"github.com/pelletier/go-toml"
 	"github.com/pkg/errors"
@@ -124,6 +124,34 @@ func (r *remote) WaitTimeout(d time.Duration) error {
 func (r *remote) Address() string {
 	return r.GRPC.Address
 }
+func (r *remote) getContainerdPid() (int, error) {
+	f, err := os.OpenFile(r.pidFile, os.O_RDWR, 0600)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return -1, nil
+		}
+		return -1, err
+	}
+	defer f.Close()
+
+	b := make([]byte, 8)
+	n, err := f.Read(b)
+	if err != nil && err != io.EOF {
+		return -1, err
+	}
+
+	if n > 0 {
+		pid, err := strconv.ParseUint(string(b[:n]), 10, 64)
+		if err != nil {
+			return -1, err
+		}
+		if system.IsProcessAlive(int(pid)) {
+			return int(pid), nil
+		}
+	}
+
+	return -1, nil
+}
 
 func (r *remote) getContainerdConfig() (string, error) {
 	f, err := os.OpenFile(r.configFile, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
@@ -139,22 +167,23 @@ func (r *remote) getContainerdConfig() (string, error) {
 }
 
 func (r *remote) startContainerd() error {
-	pid, err := pidfile.Read(r.pidFile)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	pid, err := r.getContainerdPid()
+	if err != nil {
 		return err
 	}
 
-	if pid > 0 {
+	if pid != -1 {
 		r.daemonPid = pid
 		r.logger.WithField("pid", pid).Infof("%s is still running", binaryName)
 		return nil
 	}
 
-	cfgFile, err := r.getContainerdConfig()
+	configFile, err := r.getContainerdConfig()
 	if err != nil {
 		return err
 	}
-	args := []string{"--config", cfgFile}
+
+	args := []string{"--config", configFile}
 
 	if r.logLevel != "" {
 		args = append(args, "--log-level", r.logLevel)
@@ -207,9 +236,9 @@ func (r *remote) startContainerd() error {
 		r.logger.WithError(err).Warn("failed to adjust OOM score")
 	}
 
-	err = pidfile.Write(r.pidFile, r.daemonPid)
+	err = os.WriteFile(r.pidFile, []byte(strconv.Itoa(r.daemonPid)), 0660)
 	if err != nil {
-		process.Kill(r.daemonPid)
+		system.KillProcess(r.daemonPid)
 		return errors.Wrap(err, "libcontainerd: failed to save daemon pid to disk")
 	}
 
@@ -328,7 +357,7 @@ func (r *remote) monitorDaemon(ctx context.Context) {
 			r.logger.WithError(err).WithField("binary", binaryName).Debug("daemon is not responding")
 
 			transientFailureCount++
-			if transientFailureCount < maxConnectionRetryCount || process.Alive(r.daemonPid) {
+			if transientFailureCount < maxConnectionRetryCount || system.IsProcessAlive(r.daemonPid) {
 				delay = time.Duration(transientFailureCount) * 200 * time.Millisecond
 				continue
 			}
@@ -336,7 +365,7 @@ func (r *remote) monitorDaemon(ctx context.Context) {
 			client = nil
 		}
 
-		if process.Alive(r.daemonPid) {
+		if system.IsProcessAlive(r.daemonPid) {
 			r.logger.WithField("pid", r.daemonPid).Info("killing and restarting containerd")
 			r.killDaemon()
 		}

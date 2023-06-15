@@ -1199,6 +1199,10 @@ const (
 	SizeofBpfInsn       = 0x8
 	SizeofBpfHdr        = 0x20
 	SizeofBpfZbufHeader = 0x20
+	SizeofIfInfomsg     = 0x10
+	SizeofRtAttr       = 0x4
+	SizeofIfAddrmsg     = 0x8
+	SizeofRtMsg         = 0xc
 )
 
 type BpfVersion struct {
@@ -1302,3 +1306,30 @@ type _gid_t uint32
 type Pid_t _pid_t
 type Uid_t _uid_t
 type Gid_t _gid_t
+
+type NlAttr struct {
+	Len  uint16
+	Type uint16
+}
+
+type RtAttr struct {
+	Len  uint16
+	Type uint16
+}
+
+type IfInfomsg struct {
+	Family     uint8
+	X__ifi_pad uint8
+	Type       uint16
+	Index      int32
+	Flags      uint32
+	Change     uint32
+}
+
+type IfAddrmsg struct {
+	Family    uint8
+	Prefixlen uint8
+	Flags     uint8
+	Scope     uint8
+	Index     uint32
+}

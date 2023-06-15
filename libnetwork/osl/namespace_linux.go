@@ -1,8 +1,8 @@
 package osl
 
 import (
+	"errors"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"os"
 	"os/exec"
@@ -14,12 +14,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Sirupsen/logrus"
+	"github.com/docker/docker/libnetwork/ns"
+	"github.com/docker/docker/libnetwork/osl/kernel"
+	"github.com/docker/docker/libnetwork/types"
 	"github.com/docker/docker/pkg/reexec"
-	"github.com/docker/libnetwork/ns"
-	"github.com/docker/libnetwork/types"
+	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
+	"golang.org/x/sys/unix"
 )
 
 const defaultPrefix = "/var/run/docker"
@@ -158,7 +160,7 @@ func GenerateKey(containerID string) string {
 			indexStr string
 			tmpkey   string
 		)
-		dir, err := ioutil.ReadDir(basePath())
+		dir, err := os.ReadDir(basePath())
 		if err != nil {
 			return ""
 		}
@@ -175,7 +177,6 @@ func GenerateKey(containerID string) string {
 					index = tmpindex
 					tmpkey = id
 				}
-
 			}
 		}
 		containerID = tmpkey
@@ -221,7 +222,7 @@ func NewSandbox(key string, osCreate, isRestore bool) (Sandbox, error) {
 		logrus.Warnf("Failed to set the timeout on the sandbox netlink handle sockets: %v", err)
 	}
 	// In live-restore mode, IPV6 entries are getting cleaned up due to below code
-	// We should retain IPV6 configrations in live-restore mode when Docker Daemon
+	// We should retain IPV6 configurations in live-restore mode when Docker Daemon
 	// comes back. It should work as it is on other cases
 	// As starting point, disable IPv6 on all interfaces
 	if !isRestore && !n.isDefault {
@@ -232,7 +233,7 @@ func NewSandbox(key string, osCreate, isRestore bool) (Sandbox, error) {
 	}
 
 	if err = n.loopbackUp(); err != nil {
-		n.nlHandle.Delete()
+		n.nlHandle.Close()
 		return nil, err
 	}
 
@@ -285,7 +286,7 @@ func GetSandboxForExternalKey(basePath string, key string) (Sandbox, error) {
 	}
 
 	if err = n.loopbackUp(); err != nil {
-		n.nlHandle.Delete()
+		n.nlHandle.Close()
 		return nil, err
 	}
 
@@ -325,7 +326,9 @@ func createNetworkNamespace(path string, osCreate bool) error {
 
 func unmountNamespaceFile(path string) {
 	if _, err := os.Stat(path); err == nil {
-		syscall.Unmount(path, syscall.MNT_DETACH)
+		if err := syscall.Unmount(path, syscall.MNT_DETACH); err != nil && !errors.Is(err, unix.EINVAL) {
+			logrus.WithError(err).Error("Error unmounting namespace file")
+		}
 	}
 }
 
@@ -356,6 +359,56 @@ func (n *networkNamespace) loopbackUp() error {
 		return err
 	}
 	return n.nlHandle.LinkSetUp(iface)
+}
+
+func (n *networkNamespace) GetLoopbackIfaceName() string {
+	return "lo"
+}
+
+func (n *networkNamespace) AddAliasIP(ifName string, ip *net.IPNet) error {
+	iface, err := n.nlHandle.LinkByName(ifName)
+	if err != nil {
+		return err
+	}
+	return n.nlHandle.AddrAdd(iface, &netlink.Addr{IPNet: ip})
+}
+
+func (n *networkNamespace) RemoveAliasIP(ifName string, ip *net.IPNet) error {
+	iface, err := n.nlHandle.LinkByName(ifName)
+	if err != nil {
+		return err
+	}
+	return n.nlHandle.AddrDel(iface, &netlink.Addr{IPNet: ip})
+}
+
+func (n *networkNamespace) DisableARPForVIP(srcName string) (Err error) {
+	dstName := ""
+	for _, i := range n.Interfaces() {
+		if i.SrcName() == srcName {
+			dstName = i.DstName()
+			break
+		}
+	}
+	if dstName == "" {
+		return fmt.Errorf("failed to find interface %s in sandbox", srcName)
+	}
+
+	err := n.InvokeFunc(func() {
+		path := filepath.Join("/proc/sys/net/ipv4/conf", dstName, "arp_ignore")
+		if err := os.WriteFile(path, []byte{'1', '\n'}, 0644); err != nil {
+			Err = fmt.Errorf("Failed to set %s to 1: %v", path, err)
+			return
+		}
+		path = filepath.Join("/proc/sys/net/ipv4/conf", dstName, "arp_announce")
+		if err := os.WriteFile(path, []byte{'2', '\n'}, 0644); err != nil {
+			Err = fmt.Errorf("Failed to set %s to 2: %v", path, err)
+			return
+		}
+	})
+	if err != nil {
+		return err
+	}
+	return
 }
 
 func (n *networkNamespace) InvokeFunc(f func()) error {
@@ -415,7 +468,7 @@ func (n *networkNamespace) Key() string {
 
 func (n *networkNamespace) Destroy() error {
 	if n.nlHandle != nil {
-		n.nlHandle.Delete()
+		n.nlHandle.Close()
 	}
 	// Assuming no running process is executing in this network namespace,
 	// unmounting is sufficient to destroy it.
@@ -599,7 +652,7 @@ func reexecSetIPv6() {
 		os.Exit(5)
 	}
 
-	if err = ioutil.WriteFile(path, []byte{value, '\n'}, 0644); err != nil {
+	if err = os.WriteFile(path, []byte{value, '\n'}, 0644); err != nil {
 		logrus.Errorf("failed to %s IPv6 forwarding for container's interface %s: %v", action, os.Args[2], err)
 		os.Exit(4)
 	}
@@ -618,4 +671,24 @@ func setIPv6(path, iface string, enable bool) error {
 		return fmt.Errorf("reexec to set IPv6 failed: %v", err)
 	}
 	return nil
+}
+
+// ApplyOSTweaks applies linux configs on the sandbox
+func (n *networkNamespace) ApplyOSTweaks(types []SandboxType) {
+	for _, t := range types {
+		switch t {
+		case SandboxTypeLoadBalancer, SandboxTypeIngress:
+			kernel.ApplyOSTweaks(map[string]*kernel.OSValue{
+				// disables any special handling on port reuse of existing IPVS connection table entries
+				// more info: https://github.com/torvalds/linux/blame/v5.15/Documentation/networking/ipvs-sysctl.rst#L32
+				"net.ipv4.vs.conn_reuse_mode": {Value: "0", CheckFn: nil},
+				// expires connection from the IPVS connection table when the backend is not available
+				// more info: https://github.com/torvalds/linux/blame/v5.15/Documentation/networking/ipvs-sysctl.rst#L133
+				"net.ipv4.vs.expire_nodest_conn": {Value: "1", CheckFn: nil},
+				// expires persistent connections to destination servers with weights set to 0
+				// more info: https://github.com/torvalds/linux/blame/v5.15/Documentation/networking/ipvs-sysctl.rst#L151
+				"net.ipv4.vs.expire_quiescent_template": {Value: "1", CheckFn: nil},
+			})
+		}
+	}
 }

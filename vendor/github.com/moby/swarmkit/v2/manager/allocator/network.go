@@ -375,7 +375,6 @@ func isOverlayNetwork(n *api.Network) bool {
 	return false
 }
 
-//nolint:unused // TODO(thaJeztah) this is currently unused: is it safe to remove?
 func (a *Allocator) getAllocatedNetworks() ([]*api.Network, error) {
 	var (
 		err               error
@@ -507,7 +506,6 @@ func (a *Allocator) allocateNodes(ctx context.Context, existingAddressesOnly boo
 	return nil
 }
 
-//nolint:unused // TODO(thaJeztah) this is currently unused: is it safe to remove?
 func (a *Allocator) deallocateNodes(ctx context.Context) error {
 	var (
 		nodes []*api.Node

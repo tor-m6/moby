@@ -244,7 +244,7 @@ func (c *Cluster) newNodeRunner(conf nodeStartConfig) (*nodeRunner, error) {
 		return nil, err
 	}
 
-	c.config.Backend.DaemonJoinsCluster(c)
+	// c.config.Backend.DaemonJoinsCluster(c)
 
 	return nr, nil
 }

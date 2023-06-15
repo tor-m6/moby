@@ -2,9 +2,9 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
-	"github.com/docker/docker/mystrings"
 
 	"github.com/docker/docker/api/types/filters"
 )
@@ -28,7 +28,7 @@ func (x *BuilderGCFilter) MarshalJSON() ([]byte, error) {
 	for _, k := range keys {
 		values := f.Get(k)
 		for _, v := range values {
-			arr = append(arr, k+"="+v)
+			arr = append(arr, fmt.Sprintf("%s=%s", k, v))
 		}
 	}
 	return json.Marshal(arr)
@@ -45,9 +45,9 @@ func (x *BuilderGCFilter) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	for _, s := range arr {
-		name, value, _ := mystrings.Cut(s, "=")
-		name = strings.ToLower(strings.TrimSpace(name))
-		value = strings.TrimSpace(value)
+		fields := strings.SplitN(s, "=", 2)
+		name := strings.ToLower(strings.TrimSpace(fields[0]))
+		value := strings.TrimSpace(fields[1])
 		f.Add(name, value)
 	}
 	*x = BuilderGCFilter(f)
@@ -61,12 +61,6 @@ type BuilderGCConfig struct {
 	DefaultKeepStorage string          `json:",omitempty"`
 }
 
-// BuilderHistoryConfig contains history config for a buildkit builder
-type BuilderHistoryConfig struct {
-	MaxAge     int64 `json:",omitempty"`
-	MaxEntries int64 `json:",omitempty"`
-}
-
 // BuilderEntitlements contains settings to enable/disable entitlements
 type BuilderEntitlements struct {
 	NetworkHost      *bool `json:"network-host,omitempty"`
@@ -75,7 +69,6 @@ type BuilderEntitlements struct {
 
 // BuilderConfig contains config for the builder
 type BuilderConfig struct {
-	GC           BuilderGCConfig       `json:",omitempty"`
-	Entitlements BuilderEntitlements   `json:",omitempty"`
-	History      *BuilderHistoryConfig `json:",omitempty"`
+	GC           BuilderGCConfig     `json:",omitempty"`
+	Entitlements BuilderEntitlements `json:",omitempty"`
 }

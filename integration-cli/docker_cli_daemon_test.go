@@ -31,10 +31,11 @@ import (
 	"github.com/docker/docker/integration-cli/cli"
 	"github.com/docker/docker/integration-cli/cli/build"
 	"github.com/docker/docker/integration-cli/daemon"
-	// "github.com/docker/docker/libnetwork/iptables"
+	"github.com/docker/docker/libnetwork/iptables"
 	"github.com/docker/docker/opts"
 	testdaemon "github.com/docker/docker/testutil/daemon"
 	units "github.com/docker/go-units"
+	"github.com/docker/libtrust"
 	"github.com/moby/sys/mount"
 	"golang.org/x/sys/unix"
 	"gotest.tools/v3/assert"
@@ -106,9 +107,12 @@ func (s *DockerDaemonSuite) TestDaemonRestartWithVolumesRefs(c *testing.T) {
 		c.Fatal(err, out)
 	}
 
-	out, err := s.d.Cmd("inspect", "-f", `{{range .Mounts}}{{.Destination}}{{"\n"}}{{end}}`, "volrestarttest1")
-	assert.Check(c, err)
-	assert.Check(c, is.Contains(strings.Split(out, "\n"), "/foo"))
+	out, err := s.d.Cmd("inspect", "-f", "{{json .Mounts}}", "volrestarttest1")
+	assert.NilError(c, err, out)
+
+	if _, err := inspectMountPointJSON(out, "/foo"); err != nil {
+		c.Fatalf("Expected volume to exist: /foo, error: %v\n", err)
+	}
 }
 
 // #11008
@@ -178,7 +182,7 @@ func (s *DockerDaemonSuite) TestDaemonRestartOnFailure(c *testing.T) {
 
 	// wait test1 to stop
 	hostArgs := []string{"--host", s.d.Sock()}
-	err = daemon.WaitInspectWithArgs(dockerBinary, "test1", "{{.State.Running}} {{.State.Restarting}}", "false false", 10*time.Second, hostArgs...)
+	err = waitInspectWithArgs("test1", "{{.State.Running}} {{.State.Restarting}}", "false false", 10*time.Second, hostArgs...)
 	assert.NilError(c, err, "test1 should exit but not")
 
 	// record last start time
@@ -189,7 +193,7 @@ func (s *DockerDaemonSuite) TestDaemonRestartOnFailure(c *testing.T) {
 	s.d.Restart(c)
 
 	// test1 shouldn't restart at all
-	err = daemon.WaitInspectWithArgs(dockerBinary, "test1", "{{.State.Running}} {{.State.Restarting}}", "false false", 0, hostArgs...)
+	err = waitInspectWithArgs("test1", "{{.State.Running}} {{.State.Restarting}}", "false false", 0, hostArgs...)
 	assert.NilError(c, err, "test1 should exit but not")
 
 	// make sure test1 isn't restarted when daemon restart
@@ -549,6 +553,24 @@ func (s *DockerDaemonSuite) TestDaemonAllocatesListeningPort(c *testing.T) {
 		} else if !strings.Contains(output, "port is already allocated") {
 			c.Fatalf("Expected port is already allocated error: %q", output)
 		}
+	}
+}
+
+func (s *DockerDaemonSuite) TestDaemonKeyGeneration(c *testing.T) {
+	// TODO: skip or update for Windows daemon
+	os.Remove("/etc/docker/key.json")
+	c.Setenv("DOCKER_ALLOW_SCHEMA1_PUSH_DONOTUSE", "1")
+	s.d.Start(c)
+	s.d.Stop(c)
+
+	k, err := libtrust.LoadKeyFile("/etc/docker/key.json")
+	if err != nil {
+		c.Fatalf("Error opening key file")
+	}
+	kid := k.KeyID()
+	// Test Key ID is a valid fingerprint (e.g. QQXN:JY5W:TBXI:MK3X:GX6P:PD5D:F56N:NHCS:LVRZ:JA46:R24J:XEFF)
+	if len(kid) != 59 {
+		c.Fatalf("Bad key ID: %s", kid)
 	}
 }
 
@@ -936,20 +958,20 @@ func (s *DockerDaemonSuite) TestDaemonLinksIpTablesRulesWhenLinkAndUnlink(c *tes
 	out, err = s.d.Cmd("run", "-d", "--name", "parent", "--link", "child:http", "busybox", "top")
 	assert.NilError(c, err, out)
 
-	// childIP := s.d.FindContainerIP(c, "child")
-	// parentIP := s.d.FindContainerIP(c, "parent")
+	childIP := s.d.FindContainerIP(c, "child")
+	parentIP := s.d.FindContainerIP(c, "parent")
 
-	// sourceRule := []string{"-i", bridgeName, "-o", bridgeName, "-p", "tcp", "-s", childIP, "--sport", "80", "-d", parentIP, "-j", "ACCEPT"}
-	// destinationRule := []string{"-i", bridgeName, "-o", bridgeName, "-p", "tcp", "-s", parentIP, "--dport", "80", "-d", childIP, "-j", "ACCEPT"}
-	// iptable := iptables.GetIptable(iptables.IPv4)
-	// if !iptable.Exists("filter", "DOCKER", sourceRule...) || !iptable.Exists("filter", "DOCKER", destinationRule...) {
-	// 	c.Fatal("Iptables rules not found")
-	// }
+	sourceRule := []string{"-i", bridgeName, "-o", bridgeName, "-p", "tcp", "-s", childIP, "--sport", "80", "-d", parentIP, "-j", "ACCEPT"}
+	destinationRule := []string{"-i", bridgeName, "-o", bridgeName, "-p", "tcp", "-s", parentIP, "--dport", "80", "-d", childIP, "-j", "ACCEPT"}
+	iptable := iptables.GetIptable(iptables.IPv4)
+	if !iptable.Exists("filter", "DOCKER", sourceRule...) || !iptable.Exists("filter", "DOCKER", destinationRule...) {
+		c.Fatal("Iptables rules not found")
+	}
 
-	// s.d.Cmd("rm", "--link", "parent/http")
-	// if iptable.Exists("filter", "DOCKER", sourceRule...) || iptable.Exists("filter", "DOCKER", destinationRule...) {
-	// 	c.Fatal("Iptables rules should be removed when unlink")
-	// }
+	s.d.Cmd("rm", "--link", "parent/http")
+	if iptable.Exists("filter", "DOCKER", sourceRule...) || iptable.Exists("filter", "DOCKER", destinationRule...) {
+		c.Fatal("Iptables rules should be removed when unlink")
+	}
 
 	s.d.Cmd("kill", "child")
 	s.d.Cmd("kill", "parent")
@@ -1176,6 +1198,60 @@ func (s *DockerDaemonSuite) TestDaemonUnixSockCleanedUp(c *testing.T) {
 
 	if _, err := os.Stat(sockPath); err == nil || !os.IsNotExist(err) {
 		c.Fatal("unix socket is not cleaned up")
+	}
+}
+
+func (s *DockerDaemonSuite) TestDaemonWithWrongkey(c *testing.T) {
+	type Config struct {
+		Crv string `json:"crv"`
+		D   string `json:"d"`
+		Kid string `json:"kid"`
+		Kty string `json:"kty"`
+		X   string `json:"x"`
+		Y   string `json:"y"`
+	}
+
+	os.Remove("/etc/docker/key.json")
+	c.Setenv("DOCKER_ALLOW_SCHEMA1_PUSH_DONOTUSE", "1")
+	s.d.Start(c)
+	s.d.Stop(c)
+
+	config := &Config{}
+	bytes, err := os.ReadFile("/etc/docker/key.json")
+	if err != nil {
+		c.Fatalf("Error reading key.json file: %s", err)
+	}
+
+	// byte[] to Data-Struct
+	if err := json.Unmarshal(bytes, &config); err != nil {
+		c.Fatalf("Error Unmarshal: %s", err)
+	}
+
+	// replace config.Kid with the fake value
+	config.Kid = "VSAJ:FUYR:X3H2:B2VZ:KZ6U:CJD5:K7BX:ZXHY:UZXT:P4FT:MJWG:HRJ4"
+
+	// NEW Data-Struct to byte[]
+	newBytes, err := json.Marshal(&config)
+	if err != nil {
+		c.Fatalf("Error Marshal: %s", err)
+	}
+
+	// write back
+	if err := os.WriteFile("/etc/docker/key.json", newBytes, 0400); err != nil {
+		c.Fatalf("Error os.WriteFile: %s", err)
+	}
+
+	defer os.Remove("/etc/docker/key.json")
+
+	if err := s.d.StartWithError(); err == nil {
+		c.Fatalf("It should not be successful to start daemon with wrong key: %v", err)
+	}
+
+	content, err := s.d.ReadLogFile()
+	assert.Assert(c, err == nil)
+
+	if !strings.Contains(string(content), "Public Key ID does not match") {
+		c.Fatalf("Missing KeyID message from daemon logs: %s", string(content))
 	}
 }
 

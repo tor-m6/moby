@@ -42,10 +42,10 @@ func (b *Builder) commit(ctx context.Context, dispatchState *dispatchState, comm
 		return err
 	}
 
-	return b.commitContainer(ctx, dispatchState, id, runConfigWithCommentCmd)
+	return b.commitContainer(dispatchState, id, runConfigWithCommentCmd)
 }
 
-func (b *Builder) commitContainer(ctx context.Context, dispatchState *dispatchState, id string, containerConfig *container.Config) error {
+func (b *Builder) commitContainer(dispatchState *dispatchState, id string, containerConfig *container.Config) error {
 	if b.disableCommit {
 		return nil
 	}
@@ -58,7 +58,7 @@ func (b *Builder) commitContainer(ctx context.Context, dispatchState *dispatchSt
 		ContainerID:     id,
 	}
 
-	imageID, err := b.docker.CommitBuildStep(ctx, commitCfg)
+	imageID, err := b.docker.CommitBuildStep(commitCfg)
 	dispatchState.imageID = string(imageID)
 	return err
 }
@@ -127,7 +127,7 @@ func (b *Builder) performCopy(ctx context.Context, req dispatchRequest, inst cop
 		return err
 	}
 
-	imageMount, err := b.imageSources.Get(ctx, state.imageID, true, req.builder.platform)
+	imageMount, err := b.imageSources.Get(state.imageID, true, req.builder.platform)
 	if err != nil {
 		return errors.Wrapf(err, "failed to get destination image %q", state.imageID)
 	}

@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	is "gotest.tools/v3/assert/cmp"
 	"gotest.tools/v3/fs"
 
 	containertypes "github.com/docker/docker/api/types/container"
@@ -88,7 +87,7 @@ func TestSetWindowsCredentialSpecInSpec(t *testing.T) {
 		spec := &specs.Spec{}
 
 		err := daemon.setWindowsCredentialSpec(containerFactory(`file://C:\path\to\my\credspec.json`), spec)
-		assert.ErrorContains(t, err, "invalid credential spec: file:// path cannot be absolute")
+		assert.ErrorContains(t, err, "invalid credential spec - file:// path cannot be absolute")
 
 		assert.Check(t, spec.Windows == nil)
 	})
@@ -97,7 +96,7 @@ func TestSetWindowsCredentialSpecInSpec(t *testing.T) {
 		spec := &specs.Spec{}
 
 		err := daemon.setWindowsCredentialSpec(containerFactory(`file://..\credspec.json`), spec)
-		assert.ErrorContains(t, err, fmt.Sprintf("invalid credential spec: file:// path must be under %s", credSpecsDir))
+		assert.ErrorContains(t, err, fmt.Sprintf("invalid credential spec - file:// path must be under %s", credSpecsDir))
 
 		assert.Check(t, spec.Windows == nil)
 	})
@@ -106,8 +105,9 @@ func TestSetWindowsCredentialSpecInSpec(t *testing.T) {
 		spec := &specs.Spec{}
 
 		err := daemon.setWindowsCredentialSpec(containerFactory("file://i-dont-exist.json"), spec)
-		assert.Check(t, is.ErrorContains(err, fmt.Sprintf("failed to load credential spec for container %s", dummyContainerID)))
-		assert.Check(t, is.ErrorIs(err, os.ErrNotExist))
+		assert.ErrorContains(t, err, fmt.Sprintf("credential spec for container %s could not be read from file", dummyContainerID))
+		assert.ErrorContains(t, err, "The system cannot find")
+
 		assert.Check(t, spec.Windows == nil)
 	})
 

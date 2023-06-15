@@ -18,7 +18,6 @@ import (
 	"github.com/docker/docker/daemon/config"
 	"github.com/docker/docker/daemon/images"
 	"github.com/docker/docker/libnetwork"
-	"github.com/docker/docker/opts"
 	"github.com/docker/docker/pkg/idtools"
 	"github.com/docker/docker/pkg/streamformatter"
 	"github.com/docker/go-units"
@@ -69,7 +68,7 @@ type Opt struct {
 	SessionManager      *session.Manager
 	Root                string
 	Dist                images.DistributionServices
-	NetworkController   *libnetwork.Controller
+	NetworkController   libnetwork.NetworkController
 	DefaultCgroupParent string
 	RegistryHosts       docker.RegistryHosts
 	BuilderConfig       config.BuilderConfig
@@ -82,7 +81,6 @@ type Opt struct {
 // Builder can build using BuildKit backend
 type Builder struct {
 	controller     *control.Controller
-	dnsconfig      config.DNSConfig
 	reqBodyHandler *reqBodyHandler
 
 	mu   sync.Mutex
@@ -99,7 +97,6 @@ func New(opt Opt) (*Builder, error) {
 	}
 	b := &Builder{
 		controller:     c,
-		dnsconfig:      opt.DNSConfig,
 		reqBodyHandler: reqHandler,
 		jobs:           map[string]*buildJob{},
 	}
@@ -314,7 +311,7 @@ func (b *Builder) Build(ctx context.Context, opt backend.BuildConfig) (*builder.
 		return nil, errors.Errorf("network mode %q not supported by buildkit", opt.Options.NetworkMode)
 	}
 
-	extraHosts, err := toBuildkitExtraHosts(opt.Options.ExtraHosts, b.dnsconfig.HostGatewayIP)
+	extraHosts, err := toBuildkitExtraHosts(opt.Options.ExtraHosts)
 	if err != nil {
 		return nil, err
 	}
@@ -554,28 +551,18 @@ func (j *buildJob) SetUpload(ctx context.Context, rc io.ReadCloser) error {
 }
 
 // toBuildkitExtraHosts converts hosts from docker key:value format to buildkit's csv format
-func toBuildkitExtraHosts(inp []string, hostGatewayIP net.IP) (string, error) {
+func toBuildkitExtraHosts(inp []string) (string, error) {
 	if len(inp) == 0 {
 		return "", nil
 	}
 	hosts := make([]string, 0, len(inp))
 	for _, h := range inp {
-		host, ip, ok := strings.Cut(h, ":")
-		if !ok || host == "" || ip == "" {
+		parts := strings.Split(h, ":")
+
+		if len(parts) != 2 || parts[0] == "" || net.ParseIP(parts[1]) == nil {
 			return "", errors.Errorf("invalid host %s", h)
 		}
-		// If the IP Address is a "host-gateway", replace this value with the
-		// IP address stored in the daemon level HostGatewayIP config variable.
-		if ip == opts.HostGatewayName {
-			gateway := hostGatewayIP.String()
-			if gateway == "" {
-				return "", fmt.Errorf("unable to derive the IP value for host-gateway")
-			}
-			ip = gateway
-		} else if net.ParseIP(ip) == nil {
-			return "", fmt.Errorf("invalid host %s", h)
-		}
-		hosts = append(hosts, host+"="+ip)
+		hosts = append(hosts, parts[0]+"="+parts[1])
 	}
 	return strings.Join(hosts, ","), nil
 }

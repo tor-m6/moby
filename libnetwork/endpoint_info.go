@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/docker/libnetwork/driverapi"
-	"github.com/docker/libnetwork/types"
+	"github.com/docker/docker/libnetwork/driverapi"
+	"github.com/docker/docker/libnetwork/types"
 )
 
 // EndpointInfo provides an interface to retrieve network resources bound to the endpoint.
@@ -31,6 +31,9 @@ type EndpointInfo interface {
 
 	// Sandbox returns the attached sandbox if there, nil otherwise.
 	Sandbox() Sandbox
+
+	// LoadBalancer returns whether the endpoint is the load balancer endpoint for the network.
+	LoadBalancer() bool
 }
 
 // InterfaceInfo provides an interface to retrieve interface addresses bound to the endpoint.
@@ -46,6 +49,9 @@ type InterfaceInfo interface {
 
 	// LinkLocalAddresses returns the list of link-local (IPv4/IPv6) addresses assigned to the endpoint.
 	LinkLocalAddresses() []*net.IPNet
+
+	// SrcName returns the name of the interface w/in the container
+	SrcName() string
 }
 
 type endpointInterface struct {
@@ -129,7 +135,10 @@ func (epi *endpointInterface) UnmarshalJSON(b []byte) error {
 
 	rb, _ := json.Marshal(epMap["routes"])
 	var routes []string
-	json.Unmarshal(rb, &routes)
+
+	// TODO(cpuguy83): linter noticed we don't check the error here... no idea why but it seems like it could introduce problems if we start checking
+	json.Unmarshal(rb, &routes) //nolint:errcheck
+
 	epi.routes = make([]*net.IPNet, 0)
 	for _, route := range routes {
 		ip, ipr, err := net.ParseCIDR(route)
@@ -269,6 +278,10 @@ func (epi *endpointInterface) LinkLocalAddresses() []*net.IPNet {
 	return epi.llAddrs
 }
 
+func (epi *endpointInterface) SrcName() string {
+	return epi.srcName
+}
+
 func (epi *endpointInterface) SetNames(srcName string, dstPrefix string) error {
 	epi.srcName = srcName
 	epi.dstPrefix = dstPrefix
@@ -321,6 +334,12 @@ func (ep *endpoint) Sandbox() Sandbox {
 		return nil
 	}
 	return cnt
+}
+
+func (ep *endpoint) LoadBalancer() bool {
+	ep.Lock()
+	defer ep.Unlock()
+	return ep.loadBalancer
 }
 
 func (ep *endpoint) StaticRoutes() []*types.StaticRoute {
@@ -420,10 +439,16 @@ func (epj *endpointJoinInfo) UnmarshalJSON(b []byte) error {
 	if v, ok := epMap["StaticRoutes"]; ok {
 		tb, _ := json.Marshal(v)
 		var tStaticRoute []types.StaticRoute
-		json.Unmarshal(tb, &tStaticRoute)
+		// TODO(cpuguy83): Linter caught that we aren't checking errors here
+		// I don't know why we aren't other than potentially the data is not always expected to be right?
+		// This is why I'm not adding the error check.
+		//
+		// In any case for posterity please if you figure this out document it or check the error
+		json.Unmarshal(tb, &tStaticRoute) //nolint:errcheck
 	}
 	var StaticRoutes []*types.StaticRoute
 	for _, r := range tStaticRoute {
+		r := r
 		StaticRoutes = append(StaticRoutes, &r)
 	}
 	epj.StaticRoutes = StaticRoutes
